@@ -1,0 +1,61 @@
+{
+  "name": "feynman-live",
+  "productName": "Feynman Live",
+  "version": "0.1.0",
+  "description": "Aplicación de aprendizaje conversacional Feynman con Gemini Live y fallback portable",
+  "main": "dist-electron/main.js",
+  "type": "module",
+  "scripts": {
+    "dev:main": "bun build src/main/main.ts --target=node --outfile=dist-electron/main.js --external=electron",
+    "dev:preload": "bun build src/preload/preload.ts --format=cjs --target=node --outfile=dist-electron/preload.js --external=electron",
+    "dev:electron": "electron .",
+    "start": "bun run build && electron .",
+    "dev": "bun run dev:main && bun run dev:preload && vite",
+    "build:main": "bun build src/main/main.ts --target=node --outfile=dist-electron/main.js --external=electron",
+    "build:preload": "bun build src/preload/preload.ts --format=cjs --target=node --outfile=dist-electron/preload.js --external=electron",
+    "build:renderer": "vite build",
+    "build": "tsc --noEmit && bun run build:main && bun run build:preload && bun run build:renderer",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "check": "bun run typecheck && bun run lint && bun test",
+    "package": "bun run build && electron-builder",
+    "package:dir": "bun run build && electron-builder --dir"
+  },
+  "dependencies": {
+    "@google/genai": "^2.22.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/bun": "^1.4.2",
+    "@types/node": "^22.13.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^34.0.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0"
+  },
+  "build": {
+    "appId": "com.feynmanlive.app",
+    "productName": "Feynman Live",
+    "directories": {
+      "output": "release"
+    },
+    "files": ["dist/**/*", "dist-electron/**/*", "resources/**/*", "package.json"],
+    "win": {
+      "target": ["nsis"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "trustedDependencies": ["@biomejs/biome", "@google/genai", "protobufjs"]
+}
