@@ -42,6 +42,10 @@ export class MicrophoneCapture {
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
       )();
 
+      if (this.audioContext.state === "suspended") {
+        await this.audioContext.resume();
+      }
+
       this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
 
       // Volume / Analyser

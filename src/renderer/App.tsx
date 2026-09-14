@@ -151,6 +151,12 @@ export const App: React.FC = () => {
       return;
     }
 
+    // Flush any pending debounced changes immediately before connecting
+    if (promptDebounceRef.current) clearTimeout(promptDebounceRef.current);
+    if (materialDebounceRef.current) clearTimeout(materialDebounceRef.current);
+    await api.content.saveTutorPrompt(tutorPrompt);
+    await api.content.saveStudyMaterial(studyMaterial);
+
     // Start local audio capture
     try {
       await micCaptureRef.current.start({
@@ -159,9 +165,7 @@ export const App: React.FC = () => {
           api.session.sendAudioChunk(chunk);
         },
         onVolumeChange: (vol) => {
-          if (sessionState.status === "listening") {
-            setAudioVolume(vol);
-          }
+          setAudioVolume(vol);
         },
       });
 

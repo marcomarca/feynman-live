@@ -84,6 +84,8 @@ function extractCloseInfo(event: unknown): { code: number; reason: string } {
 export class GeminiLiveAdapter implements LiveTutorProvider {
   private session: unknown | null = null;
   private connected = false;
+  private sentAudioCount = 0;
+  private receivedAudioCount = 0;
 
   private audioListeners: Set<(chunk: Uint8Array) => void> = new Set();
   private interruptedListeners: Set<() => void> = new Set();
@@ -120,6 +122,9 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
     if (this.connected) {
       await this.close();
     }
+
+    this.sentAudioCount = 0;
+    this.receivedAudioCount = 0;
 
     const keyPreview = input.apiKey
       ? `${input.apiKey.slice(0, 6)}...${input.apiKey.slice(-4)}`
@@ -231,12 +236,20 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
         }
       }
 
-      // 2. Process all parts for audio chunks
+      // 2. Process all parts for audio chunks and text
       const modelTurn = serverContent.modelTurn as Record<string, unknown> | undefined;
       if (modelTurn && Array.isArray(modelTurn.parts)) {
         for (const part of modelTurn.parts) {
           if (part && typeof part === "object") {
-            const inlineData = (part as Record<string, unknown>).inlineData as
+            const partObj = part as Record<string, unknown>;
+            if (partObj.text && typeof partObj.text === "string") {
+              this.logger.info(
+                "GeminiLiveAdapter",
+                `Texto recibido del modelo: "${partObj.text.slice(0, 120)}"`,
+              );
+            }
+
+            const inlineData = partObj.inlineData as
               | { mimeType?: string; data?: string }
               | undefined;
 
@@ -246,6 +259,13 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
                 try {
                   const binary = Buffer.from(inlineData.data, "base64");
                   const uint8 = new Uint8Array(binary.buffer, binary.byteOffset, binary.byteLength);
+                  this.receivedAudioCount += 1;
+                  if (this.receivedAudioCount === 1) {
+                    this.logger.info(
+                      "GeminiLiveAdapter",
+                      "Primer chunk de audio recibido del modelo.",
+                    );
+                  }
                   for (const listener of this.audioListeners) {
                     listener(uint8);
                   }
@@ -256,6 +276,13 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
             }
           }
         }
+      }
+
+      if (serverContent.turnComplete) {
+        this.logger.info(
+          "GeminiLiveAdapter",
+          `Turno del modelo completado (total chunks recibidos: ${this.receivedAudioCount}).`,
+        );
       }
     }
   }
@@ -278,6 +305,18 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
             data: base64Data,
           },
         });
+        this.sentAudioCount += 1;
+        if (this.sentAudioCount === 1) {
+          this.logger.info(
+            "GeminiLiveAdapter",
+            "Comenzando transmisión de audio del micrófono a Gemini Live.",
+          );
+        } else if (this.sentAudioCount % 100 === 0) {
+          this.logger.info(
+            "GeminiLiveAdapter",
+            `Transmitidos ${this.sentAudioCount} chunks de audio a Gemini.`,
+          );
+        }
       }
     } catch (e) {
       this.logger.error("GeminiLiveAdapter", "Error al enviar audio:", e);
