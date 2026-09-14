@@ -1,5 +1,5 @@
 import type React from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 interface AudioPlayerBarProps {
   audioBase64: string;
@@ -7,7 +7,7 @@ interface AudioPlayerBarProps {
 }
 
 function formatTime(seconds: number): string {
-  if (Number.isNaN(seconds) || seconds < 0) return "0:00";
+  if (Number.isNaN(seconds) || seconds < 0 || !Number.isFinite(seconds)) return "0:00";
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins}:${secs.toString().padStart(2, "0")}`;
@@ -28,74 +28,72 @@ function base64ToBlobUrl(base64Data: string): string {
 }
 
 export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({ audioBase64, durationMs }) => {
+  const playerId = useId();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(durationMs ? durationMs / 1000 : 0);
 
-  useEffect(() => {
-    if (!audioBase64) return;
-
-    let blobUrl = "";
+  // Generate Blob URL and ensure cleanup on unmount or input change
+  const blobUrl = useMemo(() => {
+    if (!audioBase64) return "";
     try {
-      blobUrl = base64ToBlobUrl(audioBase64);
+      return base64ToBlobUrl(audioBase64);
     } catch {
-      return;
+      return "";
     }
+  }, [audioBase64]);
 
-    const audio = new Audio(blobUrl);
-    audio.preload = "auto";
-    audioRef.current = audio;
+  useEffect(() => {
+    return () => {
+      if (blobUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(blobUrl);
+      }
+    };
+  }, [blobUrl]);
 
-    const handleLoaded = () => {
-      if (audio.duration && !Number.isNaN(audio.duration) && Number.isFinite(audio.duration)) {
-        setDuration(audio.duration);
+  // Pause other players when one starts playing
+  useEffect(() => {
+    const handleGlobalPlay = (e: Event) => {
+      const customEvent = e as CustomEvent<{ id: string }>;
+      if (customEvent.detail?.id !== playerId && audioRef.current && !audioRef.current.paused) {
+        audioRef.current.pause();
       }
     };
 
-    const handleTimeUpdate = () => {
-      setCurrentTime(audio.currentTime);
-    };
-
-    const handleEnded = () => {
-      setIsPlaying(false);
-      setCurrentTime(0);
-    };
-
-    const handlePlay = () => {
-      setIsPlaying(true);
-    };
-
-    const handlePause = () => {
-      setIsPlaying(false);
-    };
-
-    const handleError = () => {
-      setIsPlaying(false);
-    };
-
-    audio.addEventListener("loadedmetadata", handleLoaded);
-    audio.addEventListener("canplaythrough", handleLoaded);
-    audio.addEventListener("timeupdate", handleTimeUpdate);
-    audio.addEventListener("ended", handleEnded);
-    audio.addEventListener("play", handlePlay);
-    audio.addEventListener("pause", handlePause);
-    audio.addEventListener("error", handleError);
-
+    window.addEventListener("feynman:audio-play", handleGlobalPlay);
     return () => {
-      audio.pause();
-      audio.removeEventListener("loadedmetadata", handleLoaded);
-      audio.removeEventListener("canplaythrough", handleLoaded);
-      audio.removeEventListener("timeupdate", handleTimeUpdate);
-      audio.removeEventListener("ended", handleEnded);
-      audio.removeEventListener("play", handlePlay);
-      audio.removeEventListener("pause", handlePause);
-      audio.removeEventListener("error", handleError);
-      audio.src = "";
-      URL.revokeObjectURL(blobUrl);
-      audioRef.current = null;
+      window.removeEventListener("feynman:audio-play", handleGlobalPlay);
     };
-  }, [audioBase64]);
+  }, [playerId]);
+
+  const handleLoadedMetadata = () => {
+    const audio = audioRef.current;
+    if (audio?.duration && !Number.isNaN(audio.duration) && Number.isFinite(audio.duration)) {
+      setDuration(audio.duration);
+    }
+  };
+
+  const handleTimeUpdate = () => {
+    const audio = audioRef.current;
+    if (audio) {
+      setCurrentTime(audio.currentTime);
+    }
+  };
+
+  const handlePlay = () => {
+    setIsPlaying(true);
+    window.dispatchEvent(new CustomEvent("feynman:audio-play", { detail: { id: playerId } }));
+  };
+
+  const handlePause = () => {
+    setIsPlaying(false);
+  };
+
+  const handleEnded = () => {
+    setIsPlaying(false);
+    setCurrentTime(0);
+  };
 
   const togglePlay = () => {
     const audio = audioRef.current;
@@ -119,8 +117,23 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({ audioBase64, dur
     }
   };
 
+  if (!blobUrl) return null;
+
   return (
     <div className="audio-player-bar">
+      {/* biome-ignore lint/a11y/useMediaCaption: audio text transcription is provided in the message container */}
+      <audio
+        ref={audioRef}
+        src={blobUrl}
+        preload="metadata"
+        onLoadedMetadata={handleLoadedMetadata}
+        onDurationChange={handleLoadedMetadata}
+        onTimeUpdate={handleTimeUpdate}
+        onPlay={handlePlay}
+        onPause={handlePause}
+        onEnded={handleEnded}
+      />
+
       <button
         type="button"
         className="audio-player-btn"
