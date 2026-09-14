@@ -596,7 +596,9 @@ export const App: React.FC = () => {
             )}
 
             {activeChat?.messages && activeChat.messages.length > 0 ? (
-              activeChat.messages.map((msg) => <ChatMessageItem key={msg.id} message={msg} />)
+              activeChat.messages
+                .filter((msg) => Boolean(msg.text?.trim()) || Boolean(msg.audioBase64))
+                .map((msg) => <ChatMessageItem key={msg.id} message={msg} />)
             ) : (
               <div className="empty-chats-notice" style={{ marginTop: "40px" }}>
                 <p>Comienza tu sesión de estudio</p>

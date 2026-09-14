@@ -112,29 +112,68 @@ export class StudySessionService {
       return;
     }
 
-    const hasAudio = this.currentUserAudioChunks.length > 0;
-    const text = explicitText ? explicitText.trim() : this.currentUserTranscription.trim();
+    const hasExplicitText = explicitText !== undefined && explicitText.trim().length > 0;
+
+    if (hasExplicitText) {
+      // User sent text manually via text input.
+      // Explicitly discard ambient mic chunks so no phantom audio is attached to text.
+      const text = explicitText.trim();
+      this.currentUserAudioChunks = [];
+      this.currentUserTranscription = "";
+
+      const optimisticMsg: ChatMessage = {
+        id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        role: "user",
+        text,
+        timestamp: Date.now(),
+      };
+
+      for (const listener of this.messageCompleteListeners) {
+        listener(optimisticMsg);
+      }
+
+      this.chatStore
+        .addMessage(this.currentChatId, {
+          role: "user",
+          text,
+        })
+        .catch(() => {});
+      return;
+    }
+
+    // Voice turn:
+    // Only create a user message if there is actual transcribed speech text from the user.
+    const text = this.currentUserTranscription.trim();
     this.currentUserTranscription = "";
 
-    const hasText = Boolean(text);
+    if (!text) {
+      // No transcribed speech text: discard accumulated ambient background audio chunks
+      this.currentUserAudioChunks = [];
+      return;
+    }
 
-    if (!hasAudio && !hasText) return;
-
+    const hasAudio = this.currentUserAudioChunks.length > 0;
     const mergedAudio = hasAudio ? mergeUint8Arrays(this.currentUserAudioChunks) : undefined;
     this.currentUserAudioChunks = [];
 
-    const audioBase64 = mergedAudio
-      ? `data:audio/wav;base64,${WavEncoder.encodePcm16(mergedAudio, 16000).toString("base64")}`
-      : undefined;
+    // Ensure audio has valid duration (at least 200ms -> 6400 bytes at 16kHz PCM16)
+    const isValidAudio = Boolean(mergedAudio && mergedAudio.byteLength >= 3200);
+    const audioDurationMs =
+      isValidAudio && mergedAudio
+        ? Math.round((mergedAudio.byteLength / 2 / 16000) * 1000)
+        : undefined;
+
+    const audioBase64 =
+      isValidAudio && mergedAudio
+        ? `data:audio/wav;base64,${WavEncoder.encodePcm16(mergedAudio, 16000).toString("base64")}`
+        : undefined;
 
     const optimisticMsg: ChatMessage = {
       id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       role: "user",
       text,
       audioBase64,
-      audioDurationMs: mergedAudio
-        ? Math.round((mergedAudio.byteLength / 2 / 16000) * 1000)
-        : undefined,
+      audioDurationMs,
       timestamp: Date.now(),
     };
 
@@ -149,7 +188,7 @@ export class StudySessionService {
           role: "user",
           text,
         },
-        mergedAudio ? { bytes: mergedAudio, sampleRate: 16000 } : undefined,
+        isValidAudio && mergedAudio ? { bytes: mergedAudio, sampleRate: 16000 } : undefined,
       )
       .catch(() => {});
   }
@@ -162,26 +201,34 @@ export class StudySessionService {
     }
 
     const text = this.currentModelText.trim();
-    const hasAudio = this.currentModelAudioChunks.length > 0;
-
-    if (!text && !hasAudio) return;
-
-    const mergedAudio = hasAudio ? mergeUint8Arrays(this.currentModelAudioChunks) : undefined;
     this.currentModelText = "";
+
+    const hasAudio = this.currentModelAudioChunks.length > 0;
+    const mergedAudio = hasAudio ? mergeUint8Arrays(this.currentModelAudioChunks) : undefined;
     this.currentModelAudioChunks = [];
 
-    const audioBase64 = mergedAudio
-      ? `data:audio/wav;base64,${WavEncoder.encodePcm16(mergedAudio, 24000).toString("base64")}`
-      : undefined;
+    const isValidAudio = Boolean(mergedAudio && mergedAudio.byteLength >= 2400);
+
+    if (!text && !isValidAudio) {
+      return;
+    }
+
+    const audioDurationMs =
+      isValidAudio && mergedAudio
+        ? Math.round((mergedAudio.byteLength / 2 / 24000) * 1000)
+        : undefined;
+
+    const audioBase64 =
+      isValidAudio && mergedAudio
+        ? `data:audio/wav;base64,${WavEncoder.encodePcm16(mergedAudio, 24000).toString("base64")}`
+        : undefined;
 
     const optimisticMsg: ChatMessage = {
       id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       role: "model",
       text,
       audioBase64,
-      audioDurationMs: mergedAudio
-        ? Math.round((mergedAudio.byteLength / 2 / 24000) * 1000)
-        : undefined,
+      audioDurationMs,
       timestamp: Date.now(),
     };
 
@@ -196,7 +243,7 @@ export class StudySessionService {
           role: "model",
           text,
         },
-        mergedAudio ? { bytes: mergedAudio, sampleRate: 24000 } : undefined,
+        isValidAudio && mergedAudio ? { bytes: mergedAudio, sampleRate: 24000 } : undefined,
       )
       .catch(() => {});
   }

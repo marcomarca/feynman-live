@@ -16,6 +16,12 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
   const isUser = message.role === "user";
+  const hasText = Boolean(message.text && message.text.trim().length > 0);
+  const hasAudio = Boolean(message.audioBase64 && message.audioBase64.trim().length > 0);
+
+  if (!hasText && !hasAudio && !isStreaming) {
+    return null;
+  }
 
   const handleCopy = async () => {
     if (!message.text) return;

@@ -167,6 +167,56 @@ describe("StudySessionService (Integration)", () => {
     expect(completedMessages.length).toBe(1);
     expect(completedMessages[0].role).toBe("user");
     expect(completedMessages[0].text).toBe("¿Puedes darme un ejemplo más simple?");
+    expect(completedMessages[0].audioBase64).toBeUndefined();
+  });
+
+  it("should not create a phantom user message when model responds after a text message", async () => {
+    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
+    await sessionService.start();
+
+    const completedMessages: ChatMessage[] = [];
+    sessionService.onMessageComplete((msg) => completedMessages.push(msg));
+
+    // Simulate ambient microphone sending background noise
+    sessionService.sendAudio(new Uint8Array(1600));
+
+    // User types and sends text
+    sessionService.sendText("vale lo intento");
+    expect(completedMessages.length).toBe(1);
+    expect(completedMessages[0].role).toBe("user");
+    expect(completedMessages[0].text).toBe("vale lo intento");
+    expect(completedMessages[0].audioBase64).toBeUndefined();
+
+    // Model responds with audio and text deltas
+    fakeProvider.emitAudio(new Uint8Array(2400));
+    fakeProvider.emitTextDelta("¡Genial! Pruébalo y me cuentas.");
+    fakeProvider.emitTurnComplete();
+
+    // Exactly 2 messages total: 1 user text and 1 model response (no phantom user block)
+    expect(completedMessages.length).toBe(2);
+    expect(completedMessages[1].role).toBe("model");
+    expect(completedMessages[1].text).toBe("¡Genial! Pruébalo y me cuentas.");
+  });
+
+  it("should discard background ambient audio when user has not spoken", async () => {
+    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
+    await sessionService.start();
+
+    const completedMessages: ChatMessage[] = [];
+    sessionService.onMessageComplete((msg) => completedMessages.push(msg));
+
+    // Background noise without any user transcription
+    sessionService.sendAudio(new Uint8Array(1600));
+
+    // Model speaks
+    fakeProvider.emitAudio(new Uint8Array(2400));
+    fakeProvider.emitTextDelta("¿En qué te puedo ayudar?");
+    fakeProvider.emitTurnComplete();
+
+    // Only 1 message (the model message), no ghost user message
+    expect(completedMessages.length).toBe(1);
+    expect(completedMessages[0].role).toBe("model");
+    expect(completedMessages[0].text).toBe("¿En qué te puedo ayudar?");
   });
 
   it("should stream model text deltas and save completed model message on turnComplete", async () => {
