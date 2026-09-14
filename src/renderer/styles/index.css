@@ -545,6 +545,34 @@ body {
   box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
 }
 
+.modality-toggle-btn {
+  transition: all 0.2s ease;
+}
+
+.modality-toggle-btn.modality-audio {
+  background: rgba(99, 102, 241, 0.1);
+  border-color: rgba(99, 102, 241, 0.3);
+  color: #c7d2fe;
+}
+
+.modality-toggle-btn.modality-audio:hover {
+  background: rgba(99, 102, 241, 0.2);
+  border-color: rgba(99, 102, 241, 0.5);
+  color: #ffffff;
+}
+
+.modality-toggle-btn.modality-text {
+  background: rgba(6, 182, 212, 0.1);
+  border-color: rgba(6, 182, 212, 0.3);
+  color: #a5f3fc;
+}
+
+.modality-toggle-btn.modality-text:hover {
+  background: rgba(6, 182, 212, 0.2);
+  border-color: rgba(6, 182, 212, 0.5);
+  color: #ffffff;
+}
+
 /* Conversation Feed */
 .conversation-feed {
   flex: 1;

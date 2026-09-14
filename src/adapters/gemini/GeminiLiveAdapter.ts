@@ -13,6 +13,7 @@ export interface LiveConnectInput {
   voice?: string;
   thinkingLevel?: "minimal" | "low" | "medium" | "high";
   conversationHistory?: Array<{ role: "user" | "model"; text: string }>;
+  responseModality?: "AUDIO" | "TEXT";
 }
 
 export interface LiveTutorProvider {
@@ -180,21 +181,26 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
         }
       }
 
+      const isTextOnly = input.responseModality === "TEXT";
+
       const liveConfig: Record<string, unknown> = {
-        responseModalities: ["AUDIO"],
-        speechConfig: {
+        responseModalities: isTextOnly ? ["TEXT"] : ["AUDIO"],
+        systemInstruction: {
+          parts: [{ text: systemPrompt }],
+        },
+      };
+
+      if (!isTextOnly) {
+        liveConfig.speechConfig = {
           voiceConfig: {
             prebuiltVoiceConfig: {
               voiceName: input.voice || "Zephyr",
             },
           },
-        },
-        inputAudioTranscription: {},
-        outputAudioTranscription: {},
-        systemInstruction: {
-          parts: [{ text: systemPrompt }],
-        },
-      };
+        };
+        liveConfig.inputAudioTranscription = {};
+        liveConfig.outputAudioTranscription = {};
+      }
 
       const session = await client.live.connect({
         model: GEMINI_LIVE_MODEL,

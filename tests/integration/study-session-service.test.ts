@@ -11,6 +11,7 @@ import { AppDataStore } from "../../src/adapters/persistence/AppDataStore";
 import { ChatHistoryStore } from "../../src/adapters/persistence/ChatHistoryStore";
 import { SafeStorageSecretStore } from "../../src/adapters/persistence/SafeStorageSecretStore";
 import { type AppError, createAppError } from "../../src/domain/app-error";
+import { DEFAULT_APP_SETTINGS } from "../../src/domain/app-settings";
 import type { ChatMessage } from "../../src/domain/chat";
 import { type Result, ok } from "../../src/domain/result";
 import { StudySessionService } from "../../src/services/StudySessionService";
@@ -315,6 +316,15 @@ describe("StudySessionService (Integration)", () => {
     expect(res.ok).toBe(true);
 
     expect(fakeProvider.lastConnectInput?.conversationHistory?.length).toBe(0);
+  });
+
+  it("should pass responseModality setting to provider", async () => {
+    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
+    await dataStore.saveSettings({ ...DEFAULT_APP_SETTINGS, responseModality: "TEXT" });
+
+    const res = await sessionService.start();
+    expect(res.ok).toBe(true);
+    expect(fakeProvider.lastConnectInput?.responseModality).toBe("TEXT");
   });
 
   it("should stop session cleanly", async () => {

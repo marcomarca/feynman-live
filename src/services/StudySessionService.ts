@@ -37,6 +37,7 @@ export class StudySessionService {
 
   private reconnectAttempt = 0;
   private isMuted = false;
+  private isAwaitingTextResponse = false;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
@@ -76,6 +77,7 @@ export class StudySessionService {
     });
 
     this.provider.onTurnComplete(() => {
+      this.isAwaitingTextResponse = false;
       this.flushModelMessage();
       if (this.state.status === "speaking") {
         this.setState({ status: "listening", startedAt: Date.now() });
@@ -83,6 +85,7 @@ export class StudySessionService {
     });
 
     this.provider.onInterrupted(() => {
+      this.isAwaitingTextResponse = false;
       this.flushModelMessage();
       for (const listener of this.interruptedListeners) {
         listener();
@@ -93,10 +96,12 @@ export class StudySessionService {
     });
 
     this.provider.onError(async (error) => {
+      this.isAwaitingTextResponse = false;
       await this.handleProviderError(error);
     });
 
     this.provider.onClose(async () => {
+      this.isAwaitingTextResponse = false;
       if (this.state.status !== "idle" && this.state.status !== "stopping") {
         await this.handleProviderError(
           createAppError("CONNECTION_CLOSED", "Conexión cerrada", undefined, true),
@@ -295,6 +300,7 @@ export class StudySessionService {
     voice: string;
     thinkingLevel?: "minimal" | "low" | "medium" | "high";
     conversationHistory: Array<{ role: "user" | "model"; text: string }>;
+    responseModality?: "AUDIO" | "TEXT";
   } | null = null;
 
   async start(
@@ -310,6 +316,7 @@ export class StudySessionService {
     }
 
     this.reconnectAttempt = 0;
+    this.isAwaitingTextResponse = false;
     this.clearReconnectTimeout();
 
     const apiKey = await this.secretStore.getGeminiApiKey();
@@ -364,6 +371,7 @@ export class StudySessionService {
       voice: settings.voice,
       thinkingLevel: settings.thinkingLevel,
       conversationHistory,
+      responseModality: settings.responseModality,
     };
 
     const connectRes = await this.provider.connect({
@@ -373,6 +381,7 @@ export class StudySessionService {
       voice: settings.voice,
       thinkingLevel: settings.thinkingLevel,
       conversationHistory,
+      responseModality: settings.responseModality,
     });
 
     if (isErr(connectRes)) {
@@ -412,6 +421,7 @@ export class StudySessionService {
           studyMaterial: await this.dataStore.loadStudyMaterial(),
           voice: (await this.dataStore.loadSettings()).voice,
           thinkingLevel: (await this.dataStore.loadSettings()).thinkingLevel,
+          responseModality: (await this.dataStore.loadSettings()).responseModality,
           conversationHistory: [],
         };
 
@@ -422,6 +432,7 @@ export class StudySessionService {
           voice: config.voice,
           thinkingLevel: config.thinkingLevel,
           conversationHistory: config.conversationHistory,
+          responseModality: config.responseModality,
         });
 
         if (isErr(retryRes)) {
@@ -445,7 +456,7 @@ export class StudySessionService {
   }
 
   sendAudio(chunk: Uint8Array): void {
-    if (this.isMuted) return;
+    if (this.isMuted || this.isAwaitingTextResponse) return;
     if (this.state.status === "listening" || this.state.status === "speaking") {
       this.currentUserAudioChunks.push(chunk);
       this.provider.sendAudio(chunk);
@@ -464,6 +475,7 @@ export class StudySessionService {
       );
     }
 
+    this.isAwaitingTextResponse = true;
     this.flushUserAudioMessage(trimmed);
     this.provider.sendText(trimmed);
     return ok(undefined);
@@ -476,6 +488,7 @@ export class StudySessionService {
 
   async stop(): Promise<Result<void, AppError>> {
     this.clearReconnectTimeout();
+    this.isAwaitingTextResponse = false;
     this.setState({ status: "stopping" });
     await this.flushModelMessage();
     await this.flushUserAudioMessage();

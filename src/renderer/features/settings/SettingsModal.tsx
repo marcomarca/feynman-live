@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type {
   AppSettings,
   FallbackProviderId,
+  ResponseModality,
   SettingsPatch,
   ThinkingLevel,
 } from "../../../domain/app-settings";
@@ -44,6 +45,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const [voice, setVoice] = useState(settings.voice);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(settings.thinkingLevel);
+  const [responseModality, setResponseModality] = useState<ResponseModality>(
+    settings.responseModality,
+  );
   const [globalShortcut, setGlobalShortcut] = useState(settings.globalShortcut);
   const [launchAtLogin, setLaunchAtLogin] = useState(settings.launchAtLogin);
   const [preferredFallback, setPreferredFallback] = useState<FallbackProviderId>(
@@ -53,6 +57,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   useEffect(() => {
     setVoice(settings.voice);
     setThinkingLevel(settings.thinkingLevel);
+    setResponseModality(settings.responseModality);
     setGlobalShortcut(settings.globalShortcut);
     setLaunchAtLogin(settings.launchAtLogin);
     setPreferredFallback(settings.preferredFallbackProvider);
@@ -95,6 +100,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     await onSaveSettings({
       voice,
       thinkingLevel,
+      responseModality,
       globalShortcut,
       launchAtLogin,
       preferredFallbackProvider: preferredFallback,
@@ -213,16 +219,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         <div className="form-group">
-          <span className="form-label">Proveedor Fallback Preferido:</span>
+          <span className="form-label">Modo de Respuesta:</span>
           <select
             className="form-select"
-            value={preferredFallback}
-            onChange={(e) => setPreferredFallback(e.target.value as FallbackProviderId)}
+            value={responseModality}
+            onChange={(e) => setResponseModality(e.target.value as ResponseModality)}
           >
-            <option value="google-ai-studio">Google AI Studio</option>
-            <option value="chatgpt">ChatGPT</option>
+            <option value="AUDIO">Voz y Audio (Habla con voz + texto)</option>
+            <option value="TEXT">Solo Texto (Sin voz, ideal para resúmenes largos)</option>
           </select>
         </div>
+      </div>
+
+      <div className="form-group">
+        <span className="form-label">Proveedor Fallback Preferido:</span>
+        <select
+          className="form-select"
+          value={preferredFallback}
+          onChange={(e) => setPreferredFallback(e.target.value as FallbackProviderId)}
+        >
+          <option value="google-ai-studio">Google AI Studio</option>
+          <option value="chatgpt">ChatGPT</option>
+        </select>
       </div>
 
       {/* Desktop Integration */}

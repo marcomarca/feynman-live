@@ -12,6 +12,7 @@ describe("Settings and Defaults", () => {
     expect(DEFAULT_APP_SETTINGS.model).toBe(GEMINI_LIVE_MODEL);
     expect(DEFAULT_APP_SETTINGS.thinkingLevel).toBe("minimal");
     expect(DEFAULT_APP_SETTINGS.voice).toBe("Zephyr");
+    expect(DEFAULT_APP_SETTINGS.responseModality).toBe("AUDIO");
     expect(DEFAULT_APP_SETTINGS.globalShortcut).toBe("CommandOrControl+Shift+Space");
     expect(DEFAULT_APP_SETTINGS.launchAtLogin).toBe(false);
   });
