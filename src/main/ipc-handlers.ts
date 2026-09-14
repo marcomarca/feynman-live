@@ -173,8 +173,12 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
   // Session
   ipcMain.handle(
     IPC_CHANNELS.SESSION_START,
-    async (_, chatId?: string): Promise<Result<void, AppError>> => {
-      return sessionService.start(chatId);
+    async (
+      _,
+      chatId?: string,
+      options?: { includeHistory?: boolean },
+    ): Promise<Result<void, AppError>> => {
+      return sessionService.start(chatId, options);
     },
   );
 

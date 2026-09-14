@@ -500,6 +500,51 @@ body {
   color: var(--text-primary);
 }
 
+.context-toggle-btn {
+  transition: all 0.2s ease;
+}
+
+.context-toggle-btn.context-active {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.3);
+  color: #a7f3d0;
+}
+
+.context-toggle-btn.context-active:hover {
+  background: rgba(16, 185, 129, 0.2);
+  border-color: rgba(16, 185, 129, 0.5);
+  color: #ffffff;
+}
+
+.context-toggle-btn.context-off {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.25);
+  color: #fde68a;
+}
+
+.context-toggle-btn.context-off:hover {
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(245, 158, 11, 0.45);
+  color: #ffffff;
+}
+
+.context-indicator-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.context-indicator-dot.active {
+  background-color: var(--accent-emerald);
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+}
+
+.context-indicator-dot.off {
+  background-color: var(--accent-amber);
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+}
+
 /* Conversation Feed */
 .conversation-feed {
   flex: 1;

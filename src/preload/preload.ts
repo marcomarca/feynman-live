@@ -50,7 +50,8 @@ const api: FeynmanDesktopApi = {
   },
 
   session: {
-    start: (chatId?: string) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_START, chatId),
+    start: (chatId?: string, options?: { includeHistory?: boolean }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SESSION_START, chatId, options),
     sendText: (value: string) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_SEND_TEXT, value),
     mute: (value: boolean) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_MUTE, value),
     stop: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_STOP),

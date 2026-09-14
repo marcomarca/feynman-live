@@ -37,6 +37,7 @@ export const App: React.FC = () => {
   // Settings & Secrets
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS);
   const [hasApiKey, setHasApiKey] = useState(false);
+  const [includeHistory, setIncludeHistory] = useState(true);
 
   // Session state
   const [sessionState, setSessionState] = useState<SessionState>(INITIAL_SESSION_STATE);
@@ -222,7 +223,7 @@ export const App: React.FC = () => {
         },
       });
 
-      const res = await api.session.start(targetChatId);
+      const res = await api.session.start(targetChatId, { includeHistory });
       if (!res.ok) {
         micCaptureRef.current.stop();
         playbackQueueRef.current.clear();
@@ -482,6 +483,55 @@ export const App: React.FC = () => {
             </div>
 
             <div className="playground-header-right">
+              <button
+                type="button"
+                className={`header-action-btn context-toggle-btn ${includeHistory ? "context-active" : "context-off"}`}
+                onClick={() => setIncludeHistory((prev) => !prev)}
+                title={
+                  includeHistory
+                    ? "Contexto Activo: Al enviar audio o texto, el modelo recordará el material, prompt y todo el historial de esta conversación. Haz clic para empezar desde cero."
+                    : "Empezar desde cero: El modelo ignorará el historial previo de este chat y responderá sin contexto previo. Haz clic para activar el contexto."
+                }
+              >
+                {includeHistory ? (
+                  <>
+                    <span className="context-indicator-dot active" />
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      role="img"
+                      aria-label="Contexto Activo"
+                    >
+                      <path d="M12 8v4l3 3" />
+                      <circle cx="12" cy="12" r="9" />
+                    </svg>
+                    <span>Contexto: Activo</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="context-indicator-dot off" />
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      role="img"
+                      aria-label="Contexto Desde Cero"
+                    >
+                      <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+                      <line x1="12" y1="2" x2="12" y2="12" />
+                    </svg>
+                    <span>Contexto: Desde Cero</span>
+                  </>
+                )}
+              </button>
+
               <button
                 type="button"
                 className="header-action-btn"

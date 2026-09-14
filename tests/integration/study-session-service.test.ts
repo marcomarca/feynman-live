@@ -19,6 +19,7 @@ class FakeLiveTutorProvider implements LiveTutorProvider {
   connected = false;
   sentAudioChunks: Uint8Array[] = [];
   sentTexts: string[] = [];
+  lastConnectInput: LiveConnectInput | null = null;
 
   private audioListeners: Set<(chunk: Uint8Array) => void> = new Set();
   private textDeltaListeners: Set<(delta: string) => void> = new Set();
@@ -32,8 +33,9 @@ class FakeLiveTutorProvider implements LiveTutorProvider {
     return this.connected;
   }
 
-  async connect(_input: LiveConnectInput): Promise<Result<void, AppError>> {
+  async connect(input: LiveConnectInput): Promise<Result<void, AppError>> {
     this.connected = true;
+    this.lastConnectInput = input;
     return ok(undefined);
   }
 
@@ -197,7 +199,7 @@ describe("StudySessionService (Integration)", () => {
     await sessionService.start();
 
     const completedMessages: ChatMessage[] = [];
-    sessionService.onMessageComplete((m) => completedMessages.push(m));
+    sessionService.onMessageComplete((msg) => completedMessages.push(msg));
 
     // User sends audio chunks
     sessionService.sendAudio(new Uint8Array(3200));
@@ -210,6 +212,59 @@ describe("StudySessionService (Integration)", () => {
     expect(completedMessages[0].role).toBe("user");
     expect(completedMessages[0].text).toBe("Explícame qué es la gravedad");
     expect(completedMessages[0].audioBase64).toContain("data:audio/wav;base64,");
+  });
+
+  it("should resume existing chat and pass prior conversation history to provider by default", async () => {
+    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
+
+    // Pre-create chat with existing messages
+    const chat = await chatStore.createChat({
+      tutorPrompt: "Eres mi tutor",
+      studyMaterial: "Capítulo 1 de Física",
+      voice: "Puck",
+    });
+
+    await chatStore.addMessage(chat.id, {
+      role: "user",
+      text: "¿Qué es la primera ley de Newton?",
+    });
+
+    await chatStore.addMessage(chat.id, {
+      role: "model",
+      text: "La primera ley dice que un objeto mantiene su estado de movimiento a menos que actúe una fuerza.",
+    });
+
+    // Start session with this chat
+    const res = await sessionService.start(chat.id);
+    expect(res.ok).toBe(true);
+
+    expect(fakeProvider.lastConnectInput).not.toBeNull();
+    expect(fakeProvider.lastConnectInput?.studyMaterial).toBe("Capítulo 1 de Física");
+    expect(fakeProvider.lastConnectInput?.conversationHistory?.length).toBe(2);
+    expect(fakeProvider.lastConnectInput?.conversationHistory?.[0].text).toBe(
+      "¿Qué es la primera ley de Newton?",
+    );
+  });
+
+  it("should allow disabling conversation history when explicitly requested", async () => {
+    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
+
+    const chat = await chatStore.createChat({
+      tutorPrompt: "Eres mi tutor",
+      studyMaterial: "Capítulo 1",
+      voice: "Puck",
+    });
+
+    await chatStore.addMessage(chat.id, {
+      role: "user",
+      text: "Hola anterior",
+    });
+
+    // Start session with includeHistory: false
+    const res = await sessionService.start(chat.id, { includeHistory: false });
+    expect(res.ok).toBe(true);
+
+    expect(fakeProvider.lastConnectInput?.conversationHistory?.length).toBe(0);
   });
 
   it("should stop session cleanly", async () => {

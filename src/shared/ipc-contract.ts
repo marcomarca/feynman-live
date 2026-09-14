@@ -96,7 +96,7 @@ export interface FeynmanDesktopApi {
   };
 
   readonly session: {
-    start(chatId?: string): Promise<Result<void, AppError>>;
+    start(chatId?: string, options?: { includeHistory?: boolean }): Promise<Result<void, AppError>>;
     sendText(value: string): Promise<Result<void, AppError>>;
     mute(value: boolean): Promise<Result<void, AppError>>;
     stop(): Promise<Result<void, AppError>>;

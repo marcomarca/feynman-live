@@ -242,7 +242,18 @@ export class StudySessionService {
     return () => this.interruptedListeners.delete(listener);
   }
 
-  async start(chatId?: string): Promise<Result<void, AppError>> {
+  private activeConnectConfig: {
+    tutorPrompt: string;
+    studyMaterial: string;
+    voice: string;
+    thinkingLevel?: "minimal" | "low" | "medium" | "high";
+    conversationHistory: Array<{ role: "user" | "model"; text: string }>;
+  } | null = null;
+
+  async start(
+    chatId?: string,
+    options?: { includeHistory?: boolean },
+  ): Promise<Result<void, AppError>> {
     if (
       this.state.status === "connecting" ||
       this.state.status === "listening" ||
@@ -268,13 +279,29 @@ export class StudySessionService {
 
     this.setState({ status: "connecting" });
 
-    const tutorPrompt = await this.dataStore.loadTutorPrompt();
-    const studyMaterial = await this.dataStore.loadStudyMaterial();
+    let tutorPrompt = await this.dataStore.loadTutorPrompt();
+    let studyMaterial = await this.dataStore.loadStudyMaterial();
     const settings = await this.dataStore.loadSettings();
+    let conversationHistory: Array<{ role: "user" | "model"; text: string }> = [];
 
-    // Prepare or create Chat
-    if (chatId) {
+    // Prepare or load Chat
+    if (chatId && this.chatStore) {
       this.currentChatId = chatId;
+      const existingChat = await this.chatStore.getChat(chatId);
+      if (existingChat) {
+        if (existingChat.tutorPrompt) tutorPrompt = existingChat.tutorPrompt;
+        if (existingChat.studyMaterial) studyMaterial = existingChat.studyMaterial;
+
+        // By default, include all previous messages for seamless continuity
+        if (options?.includeHistory !== false && existingChat.messages.length > 0) {
+          conversationHistory = existingChat.messages
+            .filter((m) => Boolean(m.text?.trim()))
+            .map((m) => ({
+              role: m.role,
+              text: m.text.trim(),
+            }));
+        }
+      }
     } else if (this.chatStore) {
       const newChat = await this.chatStore.createChat({
         tutorPrompt,
@@ -284,12 +311,21 @@ export class StudySessionService {
       this.currentChatId = newChat.id;
     }
 
+    this.activeConnectConfig = {
+      tutorPrompt,
+      studyMaterial,
+      voice: settings.voice,
+      thinkingLevel: settings.thinkingLevel,
+      conversationHistory,
+    };
+
     const connectRes = await this.provider.connect({
       apiKey,
       tutorPrompt,
       studyMaterial,
       voice: settings.voice,
       thinkingLevel: settings.thinkingLevel,
+      conversationHistory,
     });
 
     if (isErr(connectRes)) {
@@ -324,16 +360,21 @@ export class StudySessionService {
           return;
         }
 
-        const tutorPrompt = await this.dataStore.loadTutorPrompt();
-        const studyMaterial = await this.dataStore.loadStudyMaterial();
-        const settings = await this.dataStore.loadSettings();
+        const config = this.activeConnectConfig || {
+          tutorPrompt: await this.dataStore.loadTutorPrompt(),
+          studyMaterial: await this.dataStore.loadStudyMaterial(),
+          voice: (await this.dataStore.loadSettings()).voice,
+          thinkingLevel: (await this.dataStore.loadSettings()).thinkingLevel,
+          conversationHistory: [],
+        };
 
         const retryRes = await this.provider.connect({
           apiKey,
-          tutorPrompt,
-          studyMaterial,
-          voice: settings.voice,
-          thinkingLevel: settings.thinkingLevel,
+          tutorPrompt: config.tutorPrompt,
+          studyMaterial: config.studyMaterial,
+          voice: config.voice,
+          thinkingLevel: config.thinkingLevel,
+          conversationHistory: config.conversationHistory,
         });
 
         if (isErr(retryRes)) {
