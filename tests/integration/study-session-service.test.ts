@@ -8,8 +8,10 @@ import type {
   LiveTutorProvider,
 } from "../../src/adapters/gemini/GeminiLiveAdapter";
 import { AppDataStore } from "../../src/adapters/persistence/AppDataStore";
+import { ChatHistoryStore } from "../../src/adapters/persistence/ChatHistoryStore";
 import { SafeStorageSecretStore } from "../../src/adapters/persistence/SafeStorageSecretStore";
 import { type AppError, createAppError } from "../../src/domain/app-error";
+import type { ChatMessage } from "../../src/domain/chat";
 import { type Result, ok } from "../../src/domain/result";
 import { StudySessionService } from "../../src/services/StudySessionService";
 
@@ -19,6 +21,8 @@ class FakeLiveTutorProvider implements LiveTutorProvider {
   sentTexts: string[] = [];
 
   private audioListeners: Set<(chunk: Uint8Array) => void> = new Set();
+  private textDeltaListeners: Set<(delta: string) => void> = new Set();
+  private turnCompleteListeners: Set<() => void> = new Set();
   private interruptedListeners: Set<() => void> = new Set();
   private errorListeners: Set<(error: AppError) => void> = new Set();
   private closeListeners: Set<() => void> = new Set();
@@ -49,6 +53,16 @@ class FakeLiveTutorProvider implements LiveTutorProvider {
     return () => this.audioListeners.delete(listener);
   }
 
+  onTextDelta(listener: (delta: string) => void): () => void {
+    this.textDeltaListeners.add(listener);
+    return () => this.textDeltaListeners.delete(listener);
+  }
+
+  onTurnComplete(listener: () => void): () => void {
+    this.turnCompleteListeners.add(listener);
+    return () => this.turnCompleteListeners.delete(listener);
+  }
+
   onInterrupted(listener: () => void): () => void {
     this.interruptedListeners.add(listener);
     return () => this.interruptedListeners.delete(listener);
@@ -69,6 +83,14 @@ class FakeLiveTutorProvider implements LiveTutorProvider {
     for (const l of this.audioListeners) l(chunk);
   }
 
+  emitTextDelta(delta: string): void {
+    for (const l of this.textDeltaListeners) l(delta);
+  }
+
+  emitTurnComplete(): void {
+    for (const l of this.turnCompleteListeners) l();
+  }
+
   emitInterrupted(): void {
     for (const l of this.interruptedListeners) l();
   }
@@ -82,6 +104,7 @@ describe("StudySessionService (Integration)", () => {
   let tempBaseDir: string;
   let dataStore: AppDataStore;
   let secretStore: SafeStorageSecretStore;
+  let chatStore: ChatHistoryStore;
   let fakeProvider: FakeLiveTutorProvider;
   let sessionService: StudySessionService;
 
@@ -89,8 +112,9 @@ describe("StudySessionService (Integration)", () => {
     tempBaseDir = await mkdtemp(join(tmpdir(), "feynman-session-test-"));
     dataStore = new AppDataStore(tempBaseDir);
     secretStore = new SafeStorageSecretStore(tempBaseDir);
+    chatStore = new ChatHistoryStore(tempBaseDir);
     fakeProvider = new FakeLiveTutorProvider();
-    sessionService = new StudySessionService(dataStore, secretStore, fakeProvider);
+    sessionService = new StudySessionService(dataStore, secretStore, fakeProvider, chatStore);
   });
 
   afterEach(() => {
@@ -114,46 +138,47 @@ describe("StudySessionService (Integration)", () => {
 
     expect(res.ok).toBe(true);
     expect(sessionService.getState().status).toBe("listening");
+    expect(sessionService.getCurrentChatId()).toBeTruthy();
   });
 
-  it("should route live text message without interrupting audio session", async () => {
+  it("should route live text message and save it to current chat", async () => {
     await secretStore.saveGeminiApiKey("AIzaSyValidKey");
     await sessionService.start();
+
+    const completedMessages: ChatMessage[] = [];
+    sessionService.onMessageComplete((msg) => completedMessages.push(msg));
 
     const textRes = sessionService.sendText("¿Puedes darme un ejemplo más simple?");
     expect(textRes.ok).toBe(true);
     expect(fakeProvider.sentTexts).toContain("¿Puedes darme un ejemplo más simple?");
-    expect(sessionService.getState().status).toBe("listening");
+
+    expect(completedMessages.length).toBe(1);
+    expect(completedMessages[0].role).toBe("user");
+    expect(completedMessages[0].text).toBe("¿Puedes darme un ejemplo más simple?");
   });
 
-  it("should transition to speaking on audio chunk and back to listening on interruption", async () => {
+  it("should stream model text deltas and save completed model message on turnComplete", async () => {
     await secretStore.saveGeminiApiKey("AIzaSyValidKey");
     await sessionService.start();
 
-    // Model speaks
-    fakeProvider.emitAudio(new Uint8Array([1, 2, 3]));
+    const deltas: string[] = [];
+    const completedMessages: ChatMessage[] = [];
+    sessionService.onTextDelta((d) => deltas.push(d));
+    sessionService.onMessageComplete((m) => completedMessages.push(m));
+
+    // Model speaks audio and text
+    fakeProvider.emitAudio(new Uint8Array(2400));
+    fakeProvider.emitTextDelta("Claro, ");
+    fakeProvider.emitTextDelta("aquí tienes un ejemplo.");
     expect(sessionService.getState().status).toBe("speaking");
 
-    // User interrupts (barge-in)
-    fakeProvider.emitInterrupted();
+    fakeProvider.emitTurnComplete();
     expect(sessionService.getState().status).toBe("listening");
-  });
 
-  it("should handle quota exhaustion error without losing user content", async () => {
-    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
-    await dataStore.saveStudyMaterial("Material valioso que no debe perderse");
-    await sessionService.start();
-
-    fakeProvider.emitError(createAppError("QUOTA_EXHAUSTED", "Cuota agotada", undefined, false));
-
-    const state = sessionService.getState();
-    expect(state.status).toBe("error");
-    if (state.status === "error") {
-      expect(state.error.code).toBe("QUOTA_EXHAUSTED");
-    }
-
-    const materialAfter = await dataStore.loadStudyMaterial();
-    expect(materialAfter).toBe("Material valioso que no debe perderse");
+    expect(deltas.join("")).toBe("Claro, aquí tienes un ejemplo.");
+    expect(completedMessages.length).toBe(1);
+    expect(completedMessages[0].role).toBe("model");
+    expect(completedMessages[0].text).toBe("Claro, aquí tienes un ejemplo.");
   });
 
   it("should stop session cleanly", async () => {

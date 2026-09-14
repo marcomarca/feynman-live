@@ -2,16 +2,36 @@ import type { LiveTutorProvider } from "../adapters/gemini/GeminiLiveAdapter";
 import type { SessionRecoveryPolicy } from "../adapters/gemini/GeminiSessionRecovery";
 import { DefaultSessionRecoveryPolicy } from "../adapters/gemini/GeminiSessionRecovery";
 import type { DataStorePort } from "../adapters/persistence/AppDataStore";
+import type { ChatStorePort } from "../adapters/persistence/ChatHistoryStore";
 import type { SecretStorePort } from "../adapters/persistence/SafeStorageSecretStore";
 import { type AppError, createAppError } from "../domain/app-error";
+import type { ChatMessage } from "../domain/chat";
 import { type Result, err, isErr, ok } from "../domain/result";
 import type { SessionState } from "../domain/session-state";
+
+function mergeUint8Arrays(chunks: Uint8Array[]): Uint8Array {
+  const totalLen = chunks.reduce((acc, c) => acc + c.byteLength, 0);
+  const result = new Uint8Array(totalLen);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+}
 
 export class StudySessionService {
   private state: SessionState = { status: "idle" };
   private stateListeners: Set<(state: SessionState) => void> = new Set();
   private audioListeners: Set<(chunk: Uint8Array) => void> = new Set();
+  private textDeltaListeners: Set<(delta: string) => void> = new Set();
+  private messageCompleteListeners: Set<(message: ChatMessage) => void> = new Set();
   private interruptedListeners: Set<() => void> = new Set();
+
+  private currentChatId: string | null = null;
+  private currentModelText = "";
+  private currentModelAudioChunks: Uint8Array[] = [];
+  private currentUserAudioChunks: Uint8Array[] = [];
 
   private reconnectAttempt = 0;
   private isMuted = false;
@@ -21,6 +41,7 @@ export class StudySessionService {
     private readonly dataStore: DataStorePort,
     private readonly secretStore: SecretStorePort,
     private readonly provider: LiveTutorProvider,
+    private readonly chatStore?: ChatStorePort,
     private readonly recoveryPolicy: SessionRecoveryPolicy = new DefaultSessionRecoveryPolicy(),
   ) {
     this.setupProviderListeners();
@@ -30,15 +51,33 @@ export class StudySessionService {
     this.provider.onAudioChunk((chunk) => {
       if (this.state.status === "listening" || this.state.status === "speaking") {
         if (this.state.status !== "speaking") {
+          // If user had pending voice chunks, save the user message now
+          this.flushUserAudioMessage();
           this.setState({ status: "speaking", startedAt: Date.now() });
         }
+        this.currentModelAudioChunks.push(chunk);
         for (const listener of this.audioListeners) {
           listener(chunk);
         }
       }
     });
 
+    this.provider.onTextDelta((delta) => {
+      this.currentModelText += delta;
+      for (const listener of this.textDeltaListeners) {
+        listener(delta);
+      }
+    });
+
+    this.provider.onTurnComplete(() => {
+      this.flushModelMessage();
+      if (this.state.status === "speaking") {
+        this.setState({ status: "listening", startedAt: Date.now() });
+      }
+    });
+
     this.provider.onInterrupted(() => {
+      this.flushModelMessage();
       for (const listener of this.interruptedListeners) {
         listener();
       }
@@ -58,6 +97,93 @@ export class StudySessionService {
         );
       }
     });
+  }
+
+  private flushUserAudioMessage(explicitText?: string): void {
+    if (!this.currentChatId || !this.chatStore) {
+      this.currentUserAudioChunks = [];
+      return;
+    }
+
+    const hasAudio = this.currentUserAudioChunks.length > 0;
+    const hasText = Boolean(explicitText?.trim());
+
+    if (!hasAudio && !hasText) return;
+
+    const mergedAudio = hasAudio ? mergeUint8Arrays(this.currentUserAudioChunks) : undefined;
+    this.currentUserAudioChunks = [];
+    const text = explicitText ? explicitText.trim() : "";
+
+    const optimisticMsg: ChatMessage = {
+      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      role: "user",
+      text,
+      audioDurationMs: mergedAudio
+        ? Math.round((mergedAudio.byteLength / 2 / 16000) * 1000)
+        : undefined,
+      timestamp: Date.now(),
+    };
+
+    for (const listener of this.messageCompleteListeners) {
+      listener(optimisticMsg);
+    }
+
+    this.chatStore
+      .addMessage(
+        this.currentChatId,
+        {
+          role: "user",
+          text,
+        },
+        mergedAudio ? { bytes: mergedAudio, sampleRate: 16000 } : undefined,
+      )
+      .catch(() => {});
+  }
+
+  private flushModelMessage(): void {
+    if (!this.currentChatId || !this.chatStore) {
+      this.currentModelText = "";
+      this.currentModelAudioChunks = [];
+      return;
+    }
+
+    const text = this.currentModelText.trim();
+    const hasAudio = this.currentModelAudioChunks.length > 0;
+
+    if (!text && !hasAudio) return;
+
+    const mergedAudio = hasAudio ? mergeUint8Arrays(this.currentModelAudioChunks) : undefined;
+    this.currentModelText = "";
+    this.currentModelAudioChunks = [];
+
+    const optimisticMsg: ChatMessage = {
+      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      role: "model",
+      text,
+      audioDurationMs: mergedAudio
+        ? Math.round((mergedAudio.byteLength / 2 / 24000) * 1000)
+        : undefined,
+      timestamp: Date.now(),
+    };
+
+    for (const listener of this.messageCompleteListeners) {
+      listener(optimisticMsg);
+    }
+
+    this.chatStore
+      .addMessage(
+        this.currentChatId,
+        {
+          role: "model",
+          text,
+        },
+        mergedAudio ? { bytes: mergedAudio, sampleRate: 24000 } : undefined,
+      )
+      .catch(() => {});
+  }
+
+  getCurrentChatId(): string | null {
+    return this.currentChatId;
   }
 
   getState(): SessionState {
@@ -82,12 +208,22 @@ export class StudySessionService {
     return () => this.audioListeners.delete(listener);
   }
 
+  onTextDelta(listener: (delta: string) => void): () => void {
+    this.textDeltaListeners.add(listener);
+    return () => this.textDeltaListeners.delete(listener);
+  }
+
+  onMessageComplete(listener: (message: ChatMessage) => void): () => void {
+    this.messageCompleteListeners.add(listener);
+    return () => this.messageCompleteListeners.delete(listener);
+  }
+
   onInterrupted(listener: () => void): () => void {
     this.interruptedListeners.add(listener);
     return () => this.interruptedListeners.delete(listener);
   }
 
-  async start(): Promise<Result<void, AppError>> {
+  async start(chatId?: string): Promise<Result<void, AppError>> {
     if (
       this.state.status === "connecting" ||
       this.state.status === "listening" ||
@@ -116,6 +252,18 @@ export class StudySessionService {
     const tutorPrompt = await this.dataStore.loadTutorPrompt();
     const studyMaterial = await this.dataStore.loadStudyMaterial();
     const settings = await this.dataStore.loadSettings();
+
+    // Prepare or create Chat
+    if (chatId) {
+      this.currentChatId = chatId;
+    } else if (this.chatStore) {
+      const newChat = await this.chatStore.createChat({
+        tutorPrompt,
+        studyMaterial,
+        voice: settings.voice,
+      });
+      this.currentChatId = newChat.id;
+    }
 
     const connectRes = await this.provider.connect({
       apiKey,
@@ -192,6 +340,7 @@ export class StudySessionService {
   sendAudio(chunk: Uint8Array): void {
     if (this.isMuted) return;
     if (this.state.status === "listening" || this.state.status === "speaking") {
+      this.currentUserAudioChunks.push(chunk);
       this.provider.sendAudio(chunk);
     }
   }
@@ -208,6 +357,7 @@ export class StudySessionService {
       );
     }
 
+    this.flushUserAudioMessage(trimmed);
     this.provider.sendText(trimmed);
     return ok(undefined);
   }
@@ -220,6 +370,8 @@ export class StudySessionService {
   async stop(): Promise<Result<void, AppError>> {
     this.clearReconnectTimeout();
     this.setState({ status: "stopping" });
+    await this.flushModelMessage();
+    await this.flushUserAudioMessage();
     await this.provider.close();
     this.setState({ status: "idle" });
     return ok(undefined);

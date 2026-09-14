@@ -1,5 +1,12 @@
 import type { AppError } from "../domain/app-error";
 import type { AppSettings, FallbackProviderId, SettingsPatch } from "../domain/app-settings";
+import type {
+  ChatMessage,
+  ChatSession,
+  ChatSessionMeta,
+  CreateChatInput,
+  UpdateChatInput,
+} from "../domain/chat";
 import type { Result } from "../domain/result";
 import type { SessionState } from "../domain/session-state";
 
@@ -24,6 +31,14 @@ export const IPC_CHANNELS = {
   CONTENT_COPY_FALLBACK: "content:copyFallback",
   CONTENT_EXPORT_FALLBACK: "content:exportFallback",
 
+  // Chats & History
+  CHATS_LIST: "chats:list",
+  CHATS_GET: "chats:get",
+  CHATS_CREATE: "chats:create",
+  CHATS_UPDATE: "chats:update",
+  CHATS_DELETE: "chats:delete",
+  CHATS_EXPORT_MD: "chats:exportMd",
+
   // Providers
   PROVIDERS_OPEN: "providers:open",
   PROVIDERS_COPY_AND_OPEN: "providers:copyAndOpen",
@@ -37,6 +52,8 @@ export const IPC_CHANNELS = {
   SESSION_AUDIO_OUT: "session:audioOut", // Main -> Renderer (PCM16 24kHz)
   SESSION_INTERRUPTED: "session:interrupted", // Main -> Renderer (clear audio queue)
   SESSION_STATE_CHANGED: "session:stateChanged", // Main -> Renderer
+  SESSION_TEXT_DELTA: "session:textDelta", // Main -> Renderer (realtime model text chunk)
+  SESSION_MESSAGE_COMPLETE: "session:messageComplete", // Main -> Renderer (new saved message with audio)
 
   // Window
   WINDOW_MINIMIZE: "window:minimize",
@@ -69,13 +86,24 @@ export interface FeynmanDesktopApi {
     exportPortablePrompt(): Promise<Result<{ path: string }, AppError>>;
   };
 
+  readonly chats: {
+    list(): Promise<ChatSessionMeta[]>;
+    get(id: string): Promise<ChatSession | null>;
+    create(input: CreateChatInput): Promise<ChatSession>;
+    update(id: string, input: UpdateChatInput): Promise<Result<ChatSession, AppError>>;
+    delete(id: string): Promise<Result<void, AppError>>;
+    exportMarkdown(id: string): Promise<string>;
+  };
+
   readonly session: {
-    start(): Promise<Result<void, AppError>>;
+    start(chatId?: string): Promise<Result<void, AppError>>;
     sendText(value: string): Promise<Result<void, AppError>>;
     mute(value: boolean): Promise<Result<void, AppError>>;
     stop(): Promise<Result<void, AppError>>;
     sendAudioChunk(chunk: Uint8Array): void;
     onAudioChunk(listener: (chunk: Uint8Array) => void): () => void;
+    onTextDelta(listener: (delta: string) => void): () => void;
+    onMessageComplete(listener: (message: ChatMessage) => void): () => void;
     onInterrupted(listener: () => void): () => void;
     onState(listener: (state: SessionState) => void): () => void;
   };

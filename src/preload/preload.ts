@@ -1,6 +1,13 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { AppError } from "../domain/app-error";
 import type { AppSettings, FallbackProviderId, SettingsPatch } from "../domain/app-settings";
+import type {
+  ChatMessage,
+  ChatSession,
+  ChatSessionMeta,
+  CreateChatInput,
+  UpdateChatInput,
+} from "../domain/chat";
 import type { Result } from "../domain/result";
 import type { SessionState } from "../domain/session-state";
 import { type FeynmanDesktopApi, IPC_CHANNELS } from "../shared/ipc-contract";
@@ -32,8 +39,18 @@ const api: FeynmanDesktopApi = {
     exportPortablePrompt: () => ipcRenderer.invoke(IPC_CHANNELS.CONTENT_EXPORT_FALLBACK),
   },
 
+  chats: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.CHATS_LIST),
+    get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CHATS_GET, id),
+    create: (input: CreateChatInput) => ipcRenderer.invoke(IPC_CHANNELS.CHATS_CREATE, input),
+    update: (id: string, input: UpdateChatInput) =>
+      ipcRenderer.invoke(IPC_CHANNELS.CHATS_UPDATE, id, input),
+    delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CHATS_DELETE, id),
+    exportMarkdown: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CHATS_EXPORT_MD, id),
+  },
+
   session: {
-    start: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_START),
+    start: (chatId?: string) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_START, chatId),
     sendText: (value: string) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_SEND_TEXT, value),
     mute: (value: boolean) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_MUTE, value),
     stop: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_STOP),
@@ -50,6 +67,22 @@ const api: FeynmanDesktopApi = {
       ipcRenderer.on(IPC_CHANNELS.SESSION_AUDIO_OUT, handler);
       return () => {
         ipcRenderer.removeListener(IPC_CHANNELS.SESSION_AUDIO_OUT, handler);
+      };
+    },
+
+    onTextDelta: (listener: (delta: string) => void) => {
+      const handler = (_: unknown, delta: string) => listener(delta);
+      ipcRenderer.on(IPC_CHANNELS.SESSION_TEXT_DELTA, handler);
+      return () => {
+        ipcRenderer.removeListener(IPC_CHANNELS.SESSION_TEXT_DELTA, handler);
+      };
+    },
+
+    onMessageComplete: (listener: (message: ChatMessage) => void) => {
+      const handler = (_: unknown, message: ChatMessage) => listener(message);
+      ipcRenderer.on(IPC_CHANNELS.SESSION_MESSAGE_COMPLETE, handler);
+      return () => {
+        ipcRenderer.removeListener(IPC_CHANNELS.SESSION_MESSAGE_COMPLETE, handler);
       };
     },
 

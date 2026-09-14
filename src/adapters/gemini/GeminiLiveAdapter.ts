@@ -22,6 +22,8 @@ export interface LiveTutorProvider {
   isConnected(): boolean;
 
   onAudioChunk(listener: (chunk: Uint8Array) => void): () => void;
+  onTextDelta(listener: (delta: string) => void): () => void;
+  onTurnComplete(listener: () => void): () => void;
   onInterrupted(listener: () => void): () => void;
   onError(listener: (error: AppError) => void): () => void;
   onClose(listener: () => void): () => void;
@@ -88,6 +90,8 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
   private receivedAudioCount = 0;
 
   private audioListeners: Set<(chunk: Uint8Array) => void> = new Set();
+  private textDeltaListeners: Set<(delta: string) => void> = new Set();
+  private turnCompleteListeners: Set<() => void> = new Set();
   private interruptedListeners: Set<() => void> = new Set();
   private errorListeners: Set<(error: AppError) => void> = new Set();
   private closeListeners: Set<() => void> = new Set();
@@ -101,6 +105,16 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
   onAudioChunk(listener: (chunk: Uint8Array) => void): () => void {
     this.audioListeners.add(listener);
     return () => this.audioListeners.delete(listener);
+  }
+
+  onTextDelta(listener: (delta: string) => void): () => void {
+    this.textDeltaListeners.add(listener);
+    return () => this.textDeltaListeners.delete(listener);
+  }
+
+  onTurnComplete(listener: () => void): () => void {
+    this.turnCompleteListeners.add(listener);
+    return () => this.turnCompleteListeners.delete(listener);
   }
 
   onInterrupted(listener: () => void): () => void {
@@ -247,6 +261,9 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
                 "GeminiLiveAdapter",
                 `Texto recibido del modelo: "${partObj.text.slice(0, 120)}"`,
               );
+              for (const listener of this.textDeltaListeners) {
+                listener(partObj.text);
+              }
             }
 
             const inlineData = partObj.inlineData as
@@ -283,6 +300,9 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
           "GeminiLiveAdapter",
           `Turno del modelo completado (total chunks recibidos: ${this.receivedAudioCount}).`,
         );
+        for (const listener of this.turnCompleteListeners) {
+          listener();
+        }
       }
     }
   }

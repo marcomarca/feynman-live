@@ -2,8 +2,10 @@ import { type BrowserWindow, dialog, ipcMain } from "electron";
 import type { ClipboardPort } from "../adapters/desktop/ClipboardAdapter";
 import type { ExternalProviderLauncherPort } from "../adapters/desktop/ExternalProviderLauncher";
 import type { DataStorePort } from "../adapters/persistence/AppDataStore";
+import type { ChatStorePort } from "../adapters/persistence/ChatHistoryStore";
 import { type AppError, createAppError } from "../domain/app-error";
 import type { FallbackProviderId, SettingsPatch } from "../domain/app-settings";
+import type { CreateChatInput, UpdateChatInput } from "../domain/chat";
 import { type Result, err, isErr, ok } from "../domain/result";
 import type { PortablePromptService } from "../services/PortablePromptService";
 import type { SettingsService } from "../services/SettingsService";
@@ -12,6 +14,7 @@ import { IPC_CHANNELS } from "../shared/ipc-contract";
 
 export interface IpcHandlerDependencies {
   dataStore: DataStorePort;
+  chatStore: ChatStorePort;
   settingsService: SettingsService;
   promptService: PortablePromptService;
   providerLauncher: ExternalProviderLauncherPort;
@@ -23,6 +26,7 @@ export interface IpcHandlerDependencies {
 export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
   const {
     dataStore,
+    chatStore,
     settingsService,
     promptService,
     providerLauncher,
@@ -122,6 +126,31 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
     },
   );
 
+  // Chats & History
+  ipcMain.handle(IPC_CHANNELS.CHATS_LIST, async () => {
+    return chatStore.listChats();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CHATS_GET, async (_, id: string) => {
+    return chatStore.getChat(id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CHATS_CREATE, async (_, input: CreateChatInput) => {
+    return chatStore.createChat(input);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CHATS_UPDATE, async (_, id: string, input: UpdateChatInput) => {
+    return chatStore.updateChat(id, input);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CHATS_DELETE, async (_, id: string) => {
+    return chatStore.deleteChat(id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CHATS_EXPORT_MD, async (_, id: string) => {
+    return chatStore.exportChatAsMarkdown(id);
+  });
+
   // Providers
   ipcMain.handle(
     IPC_CHANNELS.PROVIDERS_OPEN,
@@ -142,9 +171,12 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
   );
 
   // Session
-  ipcMain.handle(IPC_CHANNELS.SESSION_START, async (): Promise<Result<void, AppError>> => {
-    return sessionService.start();
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.SESSION_START,
+    async (_, chatId?: string): Promise<Result<void, AppError>> => {
+      return sessionService.start(chatId);
+    },
+  );
 
   ipcMain.handle(
     IPC_CHANNELS.SESSION_SEND_TEXT,
@@ -175,6 +207,20 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
     const win = getMainWindow();
     if (win && !win.isDestroyed()) {
       win.webContents.send(IPC_CHANNELS.SESSION_AUDIO_OUT, chunk);
+    }
+  });
+
+  sessionService.onTextDelta((delta) => {
+    const win = getMainWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send(IPC_CHANNELS.SESSION_TEXT_DELTA, delta);
+    }
+  });
+
+  sessionService.onMessageComplete((message) => {
+    const win = getMainWindow();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send(IPC_CHANNELS.SESSION_MESSAGE_COMPLETE, message);
     }
   });
 

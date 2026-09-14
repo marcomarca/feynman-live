@@ -4,6 +4,7 @@ import { ElectronClipboardAdapter } from "../adapters/desktop/ClipboardAdapter";
 import { ExternalProviderLauncher } from "../adapters/desktop/ExternalProviderLauncher";
 import { GeminiLiveAdapter } from "../adapters/gemini/GeminiLiveAdapter";
 import { AppDataStore } from "../adapters/persistence/AppDataStore";
+import { ChatHistoryStore } from "../adapters/persistence/ChatHistoryStore";
 import { SafeStorageSecretStore } from "../adapters/persistence/SafeStorageSecretStore";
 import { defaultCompiler } from "../services/PortablePromptCompiler";
 import { PortablePromptService } from "../services/PortablePromptService";
@@ -38,6 +39,7 @@ if (!gotTheLock) {
 
     // Initialize stores & adapters with injected Electron native providers
     const dataStore = new AppDataStore(userDataPath);
+    const chatStore = new ChatHistoryStore(userDataPath);
     const secretStore = new SafeStorageSecretStore(
       userDataPath,
       safeStorage,
@@ -50,7 +52,7 @@ if (!gotTheLock) {
     // Initialize services
     const promptService = new PortablePromptService(dataStore, defaultCompiler, clipboardAdapter);
     const settingsService = new SettingsService(dataStore, secretStore);
-    const sessionService = new StudySessionService(dataStore, secretStore, liveAdapter);
+    const sessionService = new StudySessionService(dataStore, secretStore, liveAdapter, chatStore);
 
     // Load initial settings
     const settings = await settingsService.getSettings();
@@ -64,6 +66,7 @@ if (!gotTheLock) {
     // Register IPC
     registerIpcHandlers({
       dataStore,
+      chatStore,
       settingsService,
       promptService,
       providerLauncher,
