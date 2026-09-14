@@ -12,16 +12,24 @@ export class AudioPlaybackQueue {
   private nextStartTime = 0;
   private activeSources: Set<AudioBufferSourceNode> = new Set();
   private sampleRate = 24000;
-  private leadTimeSeconds = 0.06;
+  private leadTimeSeconds = 0.1;
   private remainder: Uint8Array | null = null;
   private onVolumeChange?: (volume: number) => void;
   private onPlaybackEnded?: () => void;
 
   constructor(options?: PlaybackOptions) {
     this.sampleRate = options?.sampleRate || 24000;
-    this.leadTimeSeconds = options?.leadTimeSeconds ?? 0.06;
+    this.leadTimeSeconds = options?.leadTimeSeconds ?? 0.1;
     this.onVolumeChange = options?.onVolumeChange;
     this.onPlaybackEnded = options?.onPlaybackEnded;
+  }
+
+  async warmup(): Promise<void> {
+    const ctx = this.ensureContext();
+    if (ctx.state === "suspended") {
+      await ctx.resume();
+    }
+    this.nextStartTime = ctx.currentTime;
   }
 
   private ensureContext(): AudioContext {
@@ -33,7 +41,7 @@ export class AudioPlaybackQueue {
       this.nextStartTime = 0;
     }
     if (this.audioContext.state === "suspended") {
-      this.audioContext.resume();
+      this.audioContext.resume().catch(() => {});
     }
     return this.audioContext;
   }

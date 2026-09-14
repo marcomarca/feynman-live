@@ -157,8 +157,9 @@ export const App: React.FC = () => {
     await api.content.saveTutorPrompt(tutorPrompt);
     await api.content.saveStudyMaterial(studyMaterial);
 
-    // Start local audio capture
+    // Start local audio capture and warm up playback queue
     try {
+      await playbackQueueRef.current.warmup();
       await micCaptureRef.current.start({
         targetSampleRate: 16000,
         isAiSpeaking: () => playbackQueueRef.current.isPlaying,
