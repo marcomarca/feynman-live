@@ -23,6 +23,7 @@ export interface LiveTutorProvider {
 
   onAudioChunk(listener: (chunk: Uint8Array) => void): () => void;
   onTextDelta(listener: (delta: string) => void): () => void;
+  onUserTranscription(listener: (text: string) => void): () => void;
   onTurnComplete(listener: () => void): () => void;
   onInterrupted(listener: () => void): () => void;
   onError(listener: (error: AppError) => void): () => void;
@@ -91,6 +92,7 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
 
   private audioListeners: Set<(chunk: Uint8Array) => void> = new Set();
   private textDeltaListeners: Set<(delta: string) => void> = new Set();
+  private userTranscriptionListeners: Set<(text: string) => void> = new Set();
   private turnCompleteListeners: Set<() => void> = new Set();
   private interruptedListeners: Set<() => void> = new Set();
   private errorListeners: Set<(error: AppError) => void> = new Set();
@@ -110,6 +112,11 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
   onTextDelta(listener: (delta: string) => void): () => void {
     this.textDeltaListeners.add(listener);
     return () => this.textDeltaListeners.delete(listener);
+  }
+
+  onUserTranscription(listener: (text: string) => void): () => void {
+    this.userTranscriptionListeners.add(listener);
+    return () => this.userTranscriptionListeners.delete(listener);
   }
 
   onTurnComplete(listener: () => void): () => void {
@@ -164,6 +171,8 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
             },
           },
         },
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
         systemInstruction: {
           parts: [{ text: systemPrompt }],
         },
@@ -250,7 +259,50 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
         }
       }
 
-      // 2. Process all parts for audio chunks and text
+      // 2. Process User speech transcription if present in serverContent
+      const inputTranscription =
+        (serverContent.inputTranscription as { text?: string } | undefined) ||
+        (serverContent.inputAudioTranscription as { text?: string } | undefined);
+      if (inputTranscription?.text) {
+        this.logger.info(
+          "GeminiLiveAdapter",
+          `Transcripción del usuario recibida: "${inputTranscription.text}"`,
+        );
+        for (const listener of this.userTranscriptionListeners) {
+          listener(inputTranscription.text);
+        }
+      }
+
+      const userTurn = serverContent.userTurn as { parts?: Array<{ text?: string }> } | undefined;
+      if (userTurn && Array.isArray(userTurn.parts)) {
+        for (const part of userTurn.parts) {
+          if (part?.text) {
+            this.logger.info(
+              "GeminiLiveAdapter",
+              `Transcripción del usuario (turn): "${part.text}"`,
+            );
+            for (const listener of this.userTranscriptionListeners) {
+              listener(part.text);
+            }
+          }
+        }
+      }
+
+      // 3. Process Model output transcription / text
+      const outputTranscription =
+        (serverContent.outputTranscription as { text?: string } | undefined) ||
+        (serverContent.outputAudioTranscription as { text?: string } | undefined);
+      if (outputTranscription?.text) {
+        this.logger.info(
+          "GeminiLiveAdapter",
+          `Transcripción del modelo recibida: "${outputTranscription.text}"`,
+        );
+        for (const listener of this.textDeltaListeners) {
+          listener(outputTranscription.text);
+        }
+      }
+
+      // 4. Process all parts for audio chunks and text
       const modelTurn = serverContent.modelTurn as Record<string, unknown> | undefined;
       if (modelTurn && Array.isArray(modelTurn.parts)) {
         for (const part of modelTurn.parts) {

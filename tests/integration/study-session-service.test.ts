@@ -22,6 +22,7 @@ class FakeLiveTutorProvider implements LiveTutorProvider {
 
   private audioListeners: Set<(chunk: Uint8Array) => void> = new Set();
   private textDeltaListeners: Set<(delta: string) => void> = new Set();
+  private userTranscriptionListeners: Set<(text: string) => void> = new Set();
   private turnCompleteListeners: Set<() => void> = new Set();
   private interruptedListeners: Set<() => void> = new Set();
   private errorListeners: Set<(error: AppError) => void> = new Set();
@@ -58,6 +59,11 @@ class FakeLiveTutorProvider implements LiveTutorProvider {
     return () => this.textDeltaListeners.delete(listener);
   }
 
+  onUserTranscription(listener: (text: string) => void): () => void {
+    this.userTranscriptionListeners.add(listener);
+    return () => this.userTranscriptionListeners.delete(listener);
+  }
+
   onTurnComplete(listener: () => void): () => void {
     this.turnCompleteListeners.add(listener);
     return () => this.turnCompleteListeners.delete(listener);
@@ -85,6 +91,10 @@ class FakeLiveTutorProvider implements LiveTutorProvider {
 
   emitTextDelta(delta: string): void {
     for (const l of this.textDeltaListeners) l(delta);
+  }
+
+  emitUserTranscription(text: string): void {
+    for (const l of this.userTranscriptionListeners) l(text);
   }
 
   emitTurnComplete(): void {
@@ -179,6 +189,27 @@ describe("StudySessionService (Integration)", () => {
     expect(completedMessages.length).toBe(1);
     expect(completedMessages[0].role).toBe("model");
     expect(completedMessages[0].text).toBe("Claro, aquí tienes un ejemplo.");
+    expect(completedMessages[0].audioBase64).toContain("data:audio/wav;base64,");
+  });
+
+  it("should capture user voice audio and transcribe speech into message", async () => {
+    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
+    await sessionService.start();
+
+    const completedMessages: ChatMessage[] = [];
+    sessionService.onMessageComplete((m) => completedMessages.push(m));
+
+    // User sends audio chunks
+    sessionService.sendAudio(new Uint8Array(3200));
+    // User transcription arrives
+    fakeProvider.emitUserTranscription("Explícame qué es la gravedad");
+
+    // Model starts speaking (flushes user turn)
+    fakeProvider.emitAudio(new Uint8Array(2400));
+    expect(completedMessages.length).toBe(1);
+    expect(completedMessages[0].role).toBe("user");
+    expect(completedMessages[0].text).toBe("Explícame qué es la gravedad");
+    expect(completedMessages[0].audioBase64).toContain("data:audio/wav;base64,");
   });
 
   it("should stop session cleanly", async () => {

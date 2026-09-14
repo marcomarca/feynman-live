@@ -4,6 +4,7 @@ import { DefaultSessionRecoveryPolicy } from "../adapters/gemini/GeminiSessionRe
 import type { DataStorePort } from "../adapters/persistence/AppDataStore";
 import type { ChatStorePort } from "../adapters/persistence/ChatHistoryStore";
 import type { SecretStorePort } from "../adapters/persistence/SafeStorageSecretStore";
+import { WavEncoder } from "../adapters/persistence/WavEncoder";
 import { type AppError, createAppError } from "../domain/app-error";
 import type { ChatMessage } from "../domain/chat";
 import { type Result, err, isErr, ok } from "../domain/result";
@@ -30,6 +31,7 @@ export class StudySessionService {
 
   private currentChatId: string | null = null;
   private currentModelText = "";
+  private currentUserTranscription = "";
   private currentModelAudioChunks: Uint8Array[] = [];
   private currentUserAudioChunks: Uint8Array[] = [];
 
@@ -69,6 +71,10 @@ export class StudySessionService {
       }
     });
 
+    this.provider.onUserTranscription((text) => {
+      this.currentUserTranscription += (this.currentUserTranscription ? " " : "") + text;
+    });
+
     this.provider.onTurnComplete(() => {
       this.flushModelMessage();
       if (this.state.status === "speaking") {
@@ -102,22 +108,30 @@ export class StudySessionService {
   private flushUserAudioMessage(explicitText?: string): void {
     if (!this.currentChatId || !this.chatStore) {
       this.currentUserAudioChunks = [];
+      this.currentUserTranscription = "";
       return;
     }
 
     const hasAudio = this.currentUserAudioChunks.length > 0;
-    const hasText = Boolean(explicitText?.trim());
+    const text = explicitText ? explicitText.trim() : this.currentUserTranscription.trim();
+    this.currentUserTranscription = "";
+
+    const hasText = Boolean(text);
 
     if (!hasAudio && !hasText) return;
 
     const mergedAudio = hasAudio ? mergeUint8Arrays(this.currentUserAudioChunks) : undefined;
     this.currentUserAudioChunks = [];
-    const text = explicitText ? explicitText.trim() : "";
+
+    const audioBase64 = mergedAudio
+      ? `data:audio/wav;base64,${WavEncoder.encodePcm16(mergedAudio, 16000).toString("base64")}`
+      : undefined;
 
     const optimisticMsg: ChatMessage = {
       id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       role: "user",
       text,
+      audioBase64,
       audioDurationMs: mergedAudio
         ? Math.round((mergedAudio.byteLength / 2 / 16000) * 1000)
         : undefined,
@@ -156,10 +170,15 @@ export class StudySessionService {
     this.currentModelText = "";
     this.currentModelAudioChunks = [];
 
+    const audioBase64 = mergedAudio
+      ? `data:audio/wav;base64,${WavEncoder.encodePcm16(mergedAudio, 24000).toString("base64")}`
+      : undefined;
+
     const optimisticMsg: ChatMessage = {
       id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       role: "model",
       text,
+      audioBase64,
       audioDurationMs: mergedAudio
         ? Math.round((mergedAudio.byteLength / 2 / 24000) * 1000)
         : undefined,
