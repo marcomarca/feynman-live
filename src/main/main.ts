@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { app, clipboard, safeStorage, shell } from "electron";
 import { ElectronClipboardAdapter } from "../adapters/desktop/ClipboardAdapter";
 import { ExternalProviderLauncher } from "../adapters/desktop/ExternalProviderLauncher";
@@ -37,7 +38,11 @@ if (!gotTheLock) {
 
     // Initialize stores & adapters with injected Electron native providers
     const dataStore = new AppDataStore(userDataPath);
-    const secretStore = new SafeStorageSecretStore(userDataPath, safeStorage);
+    const secretStore = new SafeStorageSecretStore(
+      userDataPath,
+      safeStorage,
+      join(process.cwd(), ".env"),
+    );
     const clipboardAdapter = new ElectronClipboardAdapter(clipboard);
     const providerLauncher = new ExternalProviderLauncher(shell);
     const liveAdapter = new GeminiLiveAdapter(logger);

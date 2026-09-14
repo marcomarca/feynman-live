@@ -77,7 +77,7 @@ export class SafeStorageSecretStore implements SecretStorePort {
   ) {
     this.secretsDir = join(baseUserDataPath, APP_DATA_SUBDIR, SECRETS_DIR_NAME);
     this.keyFilePath = join(this.secretsDir, API_KEY_FILE_NAME);
-    this.envFilePath = envFilePath ?? join(process.cwd(), ".env");
+    this.envFilePath = envFilePath ?? join(baseUserDataPath, ".env");
   }
 
   private async ensureDir(): Promise<void> {
@@ -208,13 +208,7 @@ export class SafeStorageSecretStore implements SecretStorePort {
         }
       }
     } catch {
-      // fallback to process.env
-    }
-
-    // 3. Try reading from process.env
-    const procKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-    if (procKey && procKey.trim() !== "") {
-      return procKey.trim();
+      // no key found
     }
 
     return null;

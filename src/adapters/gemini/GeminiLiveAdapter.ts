@@ -273,12 +273,10 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
 
       if (typeof sessionObj.sendRealtimeInput === "function") {
         sessionObj.sendRealtimeInput({
-          media: [
-            {
-              mimeType: "audio/pcm;rate=16000",
-              data: base64Data,
-            },
-          ],
+          audio: {
+            mimeType: "audio/pcm;rate=16000",
+            data: base64Data,
+          },
         });
       }
     } catch (e) {
