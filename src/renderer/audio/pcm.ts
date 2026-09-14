@@ -12,17 +12,22 @@ export function float32ToPcm16(float32Array: Float32Array): Uint8Array {
 
 /**
  * Convert 16-bit signed PCM little-endian byte buffer to Float32Array [-1.0, 1.0].
+ * Uses DataView to guarantee safety with unaligned byte offsets and odd buffer lengths.
  */
 export function pcm16ToFloat32(pcm16Bytes: Uint8Array): Float32Array {
-  const int16Array = new Int16Array(
-    pcm16Bytes.buffer,
-    pcm16Bytes.byteOffset,
-    pcm16Bytes.byteLength / 2,
-  );
-  const float32Array = new Float32Array(int16Array.length);
-  for (let i = 0; i < int16Array.length; i++) {
-    float32Array[i] = int16Array[i] / (int16Array[i] < 0 ? 0x8000 : 0x7fff);
+  const sampleCount = Math.floor(pcm16Bytes.byteLength / 2);
+  if (sampleCount === 0) {
+    return new Float32Array(0);
   }
+
+  const float32Array = new Float32Array(sampleCount);
+  const dataView = new DataView(pcm16Bytes.buffer, pcm16Bytes.byteOffset, sampleCount * 2);
+
+  for (let i = 0; i < sampleCount; i++) {
+    const int16 = dataView.getInt16(i * 2, true); // true = little endian
+    float32Array[i] = int16 < 0 ? int16 / 0x8000 : int16 / 0x7fff;
+  }
+
   return float32Array;
 }
 

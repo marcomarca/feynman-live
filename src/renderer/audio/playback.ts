@@ -2,7 +2,9 @@ import { pcm16ToFloat32 } from "./pcm";
 
 export interface PlaybackOptions {
   sampleRate?: number;
+  leadTimeSeconds?: number;
   onVolumeChange?: (volume: number) => void;
+  onPlaybackEnded?: () => void;
 }
 
 export class AudioPlaybackQueue {
@@ -10,11 +12,16 @@ export class AudioPlaybackQueue {
   private nextStartTime = 0;
   private activeSources: Set<AudioBufferSourceNode> = new Set();
   private sampleRate = 24000;
+  private leadTimeSeconds = 0.06;
+  private remainder: Uint8Array | null = null;
   private onVolumeChange?: (volume: number) => void;
+  private onPlaybackEnded?: () => void;
 
   constructor(options?: PlaybackOptions) {
     this.sampleRate = options?.sampleRate || 24000;
+    this.leadTimeSeconds = options?.leadTimeSeconds ?? 0.06;
     this.onVolumeChange = options?.onVolumeChange;
+    this.onPlaybackEnded = options?.onPlaybackEnded;
   }
 
   private ensureContext(): AudioContext {
@@ -22,10 +29,8 @@ export class AudioPlaybackQueue {
       this.audioContext = new (
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-      )({
-        sampleRate: this.sampleRate,
-      });
-      this.nextStartTime = this.audioContext.currentTime;
+      )();
+      this.nextStartTime = 0;
     }
     if (this.audioContext.state === "suspended") {
       this.audioContext.resume();
@@ -33,14 +38,39 @@ export class AudioPlaybackQueue {
     return this.audioContext;
   }
 
+  get isPlaying(): boolean {
+    return this.activeSources.size > 0;
+  }
+
   enqueuePcm16(pcm16Bytes: Uint8Array): void {
-    if (pcm16Bytes.length === 0) return;
+    if (!pcm16Bytes || pcm16Bytes.length === 0) return;
+
+    // Handle odd byte boundaries across chunks
+    let bytesToProcess: Uint8Array;
+    if (this.remainder && this.remainder.length > 0) {
+      const merged = new Uint8Array(this.remainder.length + pcm16Bytes.length);
+      merged.set(this.remainder, 0);
+      merged.set(pcm16Bytes, this.remainder.length);
+      bytesToProcess = merged;
+      this.remainder = null;
+    } else {
+      bytesToProcess = pcm16Bytes;
+    }
+
+    if (bytesToProcess.length % 2 !== 0) {
+      const evenLen = bytesToProcess.length - 1;
+      this.remainder = bytesToProcess.slice(evenLen);
+      bytesToProcess = bytesToProcess.subarray(0, evenLen);
+    }
+
+    if (bytesToProcess.length === 0) return;
 
     const ctx = this.ensureContext();
-    const float32Samples = pcm16ToFloat32(pcm16Bytes);
+    const float32Samples = pcm16ToFloat32(bytesToProcess);
+    if (float32Samples.length === 0) return;
 
     // Calculate RMS volume for visual indicator
-    if (this.onVolumeChange && float32Samples.length > 0) {
+    if (this.onVolumeChange) {
       let sum = 0;
       for (let i = 0; i < float32Samples.length; i++) {
         sum += float32Samples[i] * float32Samples[i];
@@ -57,8 +87,14 @@ export class AudioPlaybackQueue {
     sourceNode.connect(ctx.destination);
 
     const currentTime = ctx.currentTime;
-    // Schedule seamlessly
-    const startTime = Math.max(currentTime, this.nextStartTime);
+    // Jitter buffer lead-time scheduling: prevents underruns between streaming network chunks
+    let startTime: number;
+    if (this.nextStartTime < currentTime + 0.01) {
+      startTime = currentTime + this.leadTimeSeconds;
+    } else {
+      startTime = this.nextStartTime;
+    }
+
     sourceNode.start(startTime);
     this.nextStartTime = startTime + audioBuffer.duration;
 
@@ -69,6 +105,7 @@ export class AudioPlaybackQueue {
       sourceNode.disconnect();
       if (this.activeSources.size === 0) {
         this.onVolumeChange?.(0);
+        this.onPlaybackEnded?.();
       }
     };
   }
@@ -77,6 +114,7 @@ export class AudioPlaybackQueue {
    * Immediately clears all scheduled/playing audio nodes upon barge-in/interruption.
    */
   clear(): void {
+    this.remainder = null;
     for (const source of this.activeSources) {
       try {
         source.stop();
@@ -90,6 +128,7 @@ export class AudioPlaybackQueue {
       this.nextStartTime = this.audioContext.currentTime;
     }
     this.onVolumeChange?.(0);
+    this.onPlaybackEnded?.();
   }
 
   close(): void {

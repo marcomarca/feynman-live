@@ -161,6 +161,7 @@ export const App: React.FC = () => {
     try {
       await micCaptureRef.current.start({
         targetSampleRate: 16000,
+        isAiSpeaking: () => playbackQueueRef.current.isPlaying,
         onAudioChunk: (chunk) => {
           api.session.sendAudioChunk(chunk);
         },

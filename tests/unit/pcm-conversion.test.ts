@@ -31,4 +31,16 @@ describe("PCM and Audio Utilities", () => {
 
     expect(resampled.length).toBe(2);
   });
+
+  it("should handle odd byte lengths and unaligned byte offsets without throwing", () => {
+    // Create a buffer with an unaligned offset (byteOffset = 1)
+    const raw = new Uint8Array([0xff, 0x00, 0x40, 0x00, 0x80, 0x7f, 0x00]); // 7 bytes
+    const unalignedSubarray = raw.subarray(1, 6); // 5 bytes, byteOffset = 1
+
+    const float32 = pcm16ToFloat32(unalignedSubarray);
+    // 5 bytes -> floor(5/2) = 2 samples
+    expect(float32.length).toBe(2);
+    expect(typeof float32[0]).toBe("number");
+    expect(typeof float32[1]).toBe("number");
+  });
 });

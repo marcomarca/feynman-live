@@ -6,6 +6,8 @@ export interface MicrophoneCaptureOptions {
   chunkSizeMs?: number;
   onAudioChunk: (chunk: Uint8Array) => void;
   onVolumeChange?: (volume: number) => void;
+  isAiSpeaking?: () => boolean;
+  bargeInThreshold?: number;
 }
 
 export class MicrophoneCapture {
@@ -76,6 +78,20 @@ export class MicrophoneCapture {
       this.processorNode.onaudioprocess = (event) => {
         if (!this.isCapturing) return;
         const inputData = event.inputBuffer.getChannelData(0);
+
+        // Echo gate: if AI is speaking, ignore low-energy speaker bleed to prevent echo barge-in loops
+        if (options.isAiSpeaking?.()) {
+          let sum = 0;
+          for (let i = 0; i < inputData.length; i++) {
+            sum += inputData[i] * inputData[i];
+          }
+          const rms = Math.sqrt(sum / inputData.length);
+          const threshold = options.bargeInThreshold ?? 0.045;
+          if (rms < threshold) {
+            return;
+          }
+        }
+
         const inputSampleRate = this.audioContext?.sampleRate || 44100;
 
         const resampled = resample(inputData, inputSampleRate, targetSampleRate);
