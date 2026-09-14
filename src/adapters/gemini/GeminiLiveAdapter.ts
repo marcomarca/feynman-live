@@ -154,7 +154,7 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
       : "[empty]";
     this.logger.info(
       "GeminiLiveAdapter",
-      `Conectando con Gemini Live (modelo: ${GEMINI_LIVE_MODEL}, key: ${keyPreview}, voz: ${input.voice || "Zephyr"})...`,
+      `Conectando con Gemini Live (modelo: ${GEMINI_LIVE_MODEL}, key: ${keyPreview}, modalidad: ${input.responseModality || "AUDIO"}, voz: ${input.voice || "Zephyr"})...`,
     );
 
     try {
@@ -182,6 +182,11 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
       }
 
       const isTextOnly = input.responseModality === "TEXT";
+
+      if (isTextOnly) {
+        systemPrompt +=
+          "\n\n# MODO_DE_RESPUESTA\nMODO EXCLUSIVO: SOLO TEXTO. Responde únicamente con texto estructurado (Markdown, listas, explicaciones detalladas o resúmenes según corresponda). No sintetices voz ni limites el texto como si fuera una conversación hablada breve. Aprovecha el formato escrito para dar explicaciones claras y completas.";
+      }
 
       const liveConfig: Record<string, unknown> = {
         responseModalities: isTextOnly ? ["TEXT"] : ["AUDIO"],

@@ -259,6 +259,61 @@ export const App: React.FC = () => {
     await api.session.mute(nextMuted);
   };
 
+  const handleToggleModality = async () => {
+    if (!api) return;
+    const nextModality = settings.responseModality === "AUDIO" ? "TEXT" : "AUDIO";
+    await handleSaveSettings({ responseModality: nextModality });
+
+    if (sessionState.status !== "idle") {
+      micCaptureRef.current.stop();
+      playbackQueueRef.current.clear();
+      setStreamingText("");
+      await api.session.stop();
+
+      let targetChatId = activeChat?.id;
+      if (!targetChatId) {
+        const created = await api.chats.create({
+          tutorPrompt,
+          studyMaterial,
+          voice: settings.voice,
+        });
+        setActiveChat(created);
+        targetChatId = created.id;
+        await refreshChatList();
+      }
+
+      try {
+        await playbackQueueRef.current.warmup();
+        await micCaptureRef.current.start({
+          targetSampleRate: 16000,
+          isAiSpeaking: () => playbackQueueRef.current.isPlaying,
+          onAudioChunk: (chunk) => {
+            api.session.sendAudioChunk(chunk);
+          },
+          onVolumeChange: (vol) => {
+            setAudioVolume(vol);
+          },
+        });
+
+        const res = await api.session.start(targetChatId, { includeHistory });
+        if (!res.ok) {
+          micCaptureRef.current.stop();
+          playbackQueueRef.current.clear();
+          setFallbackNotice(
+            `No se pudo reiniciar Gemini Live en modo ${nextModality}: ${res.error.message}`,
+          );
+          setIsFallbackOpen(true);
+        }
+      } catch (e) {
+        micCaptureRef.current.stop();
+        setFallbackNotice(
+          `Error al acceder al micrófono: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        setIsFallbackOpen(true);
+      }
+    }
+  };
+
   const handleSendText = (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!api || !inputText.trim()) return;
@@ -535,10 +590,7 @@ export const App: React.FC = () => {
               <button
                 type="button"
                 className={`header-action-btn modality-toggle-btn ${settings.responseModality === "TEXT" ? "modality-text" : "modality-audio"}`}
-                onClick={async () => {
-                  const nextModality = settings.responseModality === "AUDIO" ? "TEXT" : "AUDIO";
-                  await handleSaveSettings({ responseModality: nextModality });
-                }}
+                onClick={handleToggleModality}
                 title={
                   settings.responseModality === "AUDIO"
                     ? "Modo Voz y Audio activo: El modelo responde hablando en voz alta. Haz clic para cambiar a Modo Solo Texto (más rápido para resúmenes largos)."
