@@ -318,13 +318,13 @@ describe("StudySessionService (Integration)", () => {
     expect(fakeProvider.lastConnectInput?.conversationHistory?.length).toBe(0);
   });
 
-  it("should pass responseModality setting to provider", async () => {
+  it("should pass responseModality setting to provider as AUDIO", async () => {
     await secretStore.saveGeminiApiKey("AIzaSyValidKey");
-    await dataStore.saveSettings({ ...DEFAULT_APP_SETTINGS, responseModality: "TEXT" });
+    await dataStore.saveSettings({ ...DEFAULT_APP_SETTINGS, responseModality: "AUDIO" });
 
     const res = await sessionService.start();
     expect(res.ok).toBe(true);
-    expect(fakeProvider.lastConnectInput?.responseModality).toBe("TEXT");
+    expect(fakeProvider.lastConnectInput?.responseModality).toBe("AUDIO");
   });
 
   it("should stop session cleanly", async () => {

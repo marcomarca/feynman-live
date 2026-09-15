@@ -57,7 +57,7 @@ const api: FeynmanDesktopApi = {
     stop: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_STOP),
 
     sendAudioChunk: (chunk: Uint8Array) => {
-      ipcRenderer.send(IPC_CHANNELS.SESSION_AUDIO_IN, chunk.buffer);
+      ipcRenderer.send(IPC_CHANNELS.SESSION_AUDIO_IN, chunk);
     },
 
     onAudioChunk: (listener: (chunk: Uint8Array) => void) => {

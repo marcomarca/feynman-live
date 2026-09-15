@@ -201,10 +201,20 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
   });
 
   // Audio Stream In (Renderer -> Main)
-  ipcMain.on(IPC_CHANNELS.SESSION_AUDIO_IN, (_, chunkBuffer: ArrayBuffer) => {
-    const chunk = new Uint8Array(chunkBuffer);
-    sessionService.sendAudio(chunk);
-  });
+  ipcMain.on(
+    IPC_CHANNELS.SESSION_AUDIO_IN,
+    (_, rawChunk: Uint8Array | Buffer | ArrayBuffer) => {
+      let chunk: Uint8Array;
+      if (rawChunk instanceof Uint8Array) {
+        chunk = rawChunk;
+      } else if (rawChunk instanceof ArrayBuffer) {
+        chunk = new Uint8Array(rawChunk);
+      } else {
+        chunk = new Uint8Array(rawChunk);
+      }
+      sessionService.sendAudio(chunk);
+    },
+  );
 
   // Audio Stream Out & State (Main -> Renderer)
   sessionService.onAudioChunk((chunk) => {

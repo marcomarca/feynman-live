@@ -145,6 +145,7 @@ export class AppDataStore implements DataStorePort {
         ...parsed,
         version: 1,
         model: "gemini-3.1-flash-live-preview",
+        responseModality: "AUDIO",
       };
     } catch {
       return DEFAULT_APP_SETTINGS;

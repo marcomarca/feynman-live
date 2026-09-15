@@ -181,31 +181,21 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
         }
       }
 
-      const isTextOnly = input.responseModality === "TEXT";
-
-      if (isTextOnly) {
-        systemPrompt +=
-          "\n\n# MODO_DE_RESPUESTA\nMODO EXCLUSIVO: SOLO TEXTO. Responde únicamente con texto estructurado (Markdown, listas, explicaciones detalladas o resúmenes según corresponda). No sintetices voz ni limites el texto como si fuera una conversación hablada breve. Aprovecha el formato escrito para dar explicaciones claras y completas.";
-      }
-
       const liveConfig: Record<string, unknown> = {
-        responseModalities: isTextOnly ? ["TEXT"] : ["AUDIO"],
+        responseModalities: ["AUDIO"],
         systemInstruction: {
           parts: [{ text: systemPrompt }],
         },
-      };
-
-      if (!isTextOnly) {
-        liveConfig.speechConfig = {
+        speechConfig: {
           voiceConfig: {
             prebuiltVoiceConfig: {
               voiceName: input.voice || "Zephyr",
             },
           },
-        };
-        liveConfig.inputAudioTranscription = {};
-        liveConfig.outputAudioTranscription = {};
-      }
+        },
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+      };
 
       const session = await client.live.connect({
         model: GEMINI_LIVE_MODEL,
@@ -394,23 +384,30 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
     }
 
     try {
-      const base64Data = Buffer.from(chunk).toString("base64");
+      const base64Data = Buffer.from(
+        chunk.buffer,
+        chunk.byteOffset,
+        chunk.byteLength,
+      ).toString("base64");
       const sessionObj = this.session as {
         sendRealtimeInput?: (params: unknown) => void;
+        conn?: { send?: (data: string) => void };
       };
 
       if (typeof sessionObj.sendRealtimeInput === "function") {
         sessionObj.sendRealtimeInput({
-          audio: {
-            mimeType: "audio/pcm;rate=16000",
-            data: base64Data,
-          },
+          media: [
+            {
+              mimeType: "audio/pcm;rate=16000",
+              data: base64Data,
+            },
+          ],
         });
         this.sentAudioCount += 1;
         if (this.sentAudioCount === 1) {
           this.logger.info(
             "GeminiLiveAdapter",
-            "Comenzando transmisión de audio del micrófono a Gemini Live.",
+            "Comenzando transmisión de audio del micrófono a Gemini Live (mediaChunks PCM 16kHz).",
           );
         } else if (this.sentAudioCount % 100 === 0) {
           this.logger.info(
@@ -418,6 +415,19 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
             `Transmitidos ${this.sentAudioCount} chunks de audio a Gemini.`,
           );
         }
+      } else if (sessionObj.conn && typeof sessionObj.conn.send === "function") {
+        sessionObj.conn.send(
+          JSON.stringify({
+            realtimeInput: {
+              mediaChunks: [
+                {
+                  mimeType: "audio/pcm;rate=16000",
+                  data: base64Data,
+                },
+              ],
+            },
+          }),
+        );
       }
     } catch (e) {
       this.logger.error("GeminiLiveAdapter", "Error al enviar audio:", e);
@@ -437,6 +447,7 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
     try {
       const sessionObj = this.session as {
         sendClientContent?: (params: unknown) => void;
+        send?: (params: unknown) => void;
       };
 
       if (typeof sessionObj.sendClientContent === "function") {
@@ -448,6 +459,18 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
             },
           ],
           turnComplete: true,
+        });
+      } else if (typeof sessionObj.send === "function") {
+        sessionObj.send({
+          clientContent: {
+            turns: [
+              {
+                role: "user",
+                parts: [{ text: trimmed }],
+              },
+            ],
+            turnComplete: true,
+          },
         });
       }
     } catch (e) {

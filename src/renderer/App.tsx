@@ -42,6 +42,8 @@ export const App: React.FC = () => {
   // Session state
   const [sessionState, setSessionState] = useState<SessionState>(INITIAL_SESSION_STATE);
   const [isMuted, setIsMuted] = useState(false);
+  const [isTutorVoiceMuted, setIsTutorVoiceMuted] = useState(false);
+  const isTutorVoiceMutedRef = useRef(false);
   const [_audioVolume, setAudioVolume] = useState(0);
 
   // Modals
@@ -100,7 +102,9 @@ export const App: React.FC = () => {
     });
 
     const unsubAudio = api.session.onAudioChunk((chunk) => {
-      playbackQueueRef.current.enqueuePcm16(chunk);
+      if (!isTutorVoiceMutedRef.current) {
+        playbackQueueRef.current.enqueuePcm16(chunk);
+      }
     });
 
     const unsubTextDelta = api.session.onTextDelta((delta) => {
@@ -259,58 +263,12 @@ export const App: React.FC = () => {
     await api.session.mute(nextMuted);
   };
 
-  const handleToggleModality = async () => {
-    if (!api) return;
-    const nextModality = settings.responseModality === "AUDIO" ? "TEXT" : "AUDIO";
-    await handleSaveSettings({ responseModality: nextModality });
-
-    if (sessionState.status !== "idle") {
-      micCaptureRef.current.stop();
+  const handleToggleTutorVoice = () => {
+    const next = !isTutorVoiceMuted;
+    setIsTutorVoiceMuted(next);
+    isTutorVoiceMutedRef.current = next;
+    if (next) {
       playbackQueueRef.current.clear();
-      setStreamingText("");
-      await api.session.stop();
-
-      let targetChatId = activeChat?.id;
-      if (!targetChatId) {
-        const created = await api.chats.create({
-          tutorPrompt,
-          studyMaterial,
-          voice: settings.voice,
-        });
-        setActiveChat(created);
-        targetChatId = created.id;
-        await refreshChatList();
-      }
-
-      try {
-        await playbackQueueRef.current.warmup();
-        await micCaptureRef.current.start({
-          targetSampleRate: 16000,
-          isAiSpeaking: () => playbackQueueRef.current.isPlaying,
-          onAudioChunk: (chunk) => {
-            api.session.sendAudioChunk(chunk);
-          },
-          onVolumeChange: (vol) => {
-            setAudioVolume(vol);
-          },
-        });
-
-        const res = await api.session.start(targetChatId, { includeHistory });
-        if (!res.ok) {
-          micCaptureRef.current.stop();
-          playbackQueueRef.current.clear();
-          setFallbackNotice(
-            `No se pudo reiniciar Gemini Live en modo ${nextModality}: ${res.error.message}`,
-          );
-          setIsFallbackOpen(true);
-        }
-      } catch (e) {
-        micCaptureRef.current.stop();
-        setFallbackNotice(
-          `Error al acceder al micrófono: ${e instanceof Error ? e.message : String(e)}`,
-        );
-        setIsFallbackOpen(true);
-      }
     }
   };
 
@@ -589,15 +547,15 @@ export const App: React.FC = () => {
 
               <button
                 type="button"
-                className={`header-action-btn modality-toggle-btn ${settings.responseModality === "TEXT" ? "modality-text" : "modality-audio"}`}
-                onClick={handleToggleModality}
+                className={`header-action-btn modality-toggle-btn ${isTutorVoiceMuted ? "modality-text" : "modality-audio"}`}
+                onClick={handleToggleTutorVoice}
                 title={
-                  settings.responseModality === "AUDIO"
-                    ? "Modo Voz y Audio activo: El modelo responde hablando en voz alta. Haz clic para cambiar a Modo Solo Texto (más rápido para resúmenes largos)."
-                    : "Modo Solo Texto activo: El modelo responde rápidamente en texto sin audio. Haz clic para cambiar a Modo Voz y Audio."
+                  isTutorVoiceMuted
+                    ? "Voz del tutor silenciada (modo lectura). Haz clic para activar el audio del tutor."
+                    : "Voz del tutor activa. Haz clic para silenciar el audio y estudiar solo con texto."
                 }
               >
-                {settings.responseModality === "AUDIO" ? (
+                {!isTutorVoiceMuted ? (
                   <>
                     <svg
                       width="14"
@@ -607,12 +565,12 @@ export const App: React.FC = () => {
                       stroke="currentColor"
                       strokeWidth="2"
                       role="img"
-                      aria-label="Modo Voz"
+                      aria-label="Audio del tutor activo"
                     >
-                      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
                     </svg>
-                    <span>Modo: Voz</span>
+                    <span>Voz: Activa</span>
                   </>
                 ) : (
                   <>
@@ -624,15 +582,13 @@ export const App: React.FC = () => {
                       stroke="currentColor"
                       strokeWidth="2"
                       role="img"
-                      aria-label="Modo Texto"
+                      aria-label="Audio del tutor silenciado"
                     >
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                      <polyline points="14 2 14 8 20 8" />
-                      <line x1="16" y1="13" x2="8" y2="13" />
-                      <line x1="16" y1="17" x2="8" y2="17" />
-                      <polyline points="10 9 9 9 8 9" />
+                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                      <line x1="23" y1="9" x2="17" y2="15" />
+                      <line x1="17" y1="9" x2="23" y2="15" />
                     </svg>
-                    <span>Modo: Texto</span>
+                    <span>Voz: Silenciada</span>
                   </>
                 )}
               </button>
