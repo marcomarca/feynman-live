@@ -24,3 +24,11 @@ Thumbs.db
 !*.example
 secrets/
 *.bin
+
+# Android Build Artifacts
+.gradle/
+android/.gradle/
+android/build/
+android/app/build/
+*.apk
+*.aab
