@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, type Session } from "@google/genai";
 import { type AppError, createAppError } from "../../domain/app-error";
 import { type Result, err, ok } from "../../domain/result";
 import { GEMINI_LIVE_MODEL } from "../../shared/constants";
@@ -87,7 +87,7 @@ function extractCloseInfo(event: unknown): { code: number; reason: string } {
 }
 
 export class GeminiLiveAdapter implements LiveTutorProvider {
-  private session: unknown | null = null;
+  private session: Session | null = null;
   private connected = false;
   private sentAudioCount = 0;
   private receivedAudioCount = 0;
@@ -191,6 +191,12 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
             prebuiltVoiceConfig: {
               voiceName: input.voice || "Zephyr",
             },
+          },
+        },
+        realtimeInputConfig: {
+          automaticActivityDetection: {
+            disabled: false,
+            silenceDurationMs: 600,
           },
         },
         inputAudioTranscription: {},
@@ -384,49 +390,25 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
     }
 
     try {
-      const base64Data = Buffer.from(
-        chunk.buffer,
-        chunk.byteOffset,
-        chunk.byteLength,
-      ).toString("base64");
-      const sessionObj = this.session as {
-        sendRealtimeInput?: (params: unknown) => void;
-        conn?: { send?: (data: string) => void };
-      };
-
-      if (typeof sessionObj.sendRealtimeInput === "function") {
-        sessionObj.sendRealtimeInput({
-          media: [
-            {
-              mimeType: "audio/pcm;rate=16000",
-              data: base64Data,
-            },
-          ],
-        });
-        this.sentAudioCount += 1;
-        if (this.sentAudioCount === 1) {
-          this.logger.info(
-            "GeminiLiveAdapter",
-            "Comenzando transmisión de audio del micrófono a Gemini Live (mediaChunks PCM 16kHz).",
-          );
-        } else if (this.sentAudioCount % 100 === 0) {
-          this.logger.info(
-            "GeminiLiveAdapter",
-            `Transmitidos ${this.sentAudioCount} chunks de audio a Gemini.`,
-          );
-        }
-      } else if (sessionObj.conn && typeof sessionObj.conn.send === "function") {
-        sessionObj.conn.send(
-          JSON.stringify({
-            realtimeInput: {
-              mediaChunks: [
-                {
-                  mimeType: "audio/pcm;rate=16000",
-                  data: base64Data,
-                },
-              ],
-            },
-          }),
+      const base64Data = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength).toString(
+        "base64",
+      );
+      this.session.sendRealtimeInput({
+        audio: {
+          mimeType: "audio/pcm;rate=16000",
+          data: base64Data,
+        },
+      });
+      this.sentAudioCount += 1;
+      if (this.sentAudioCount === 1) {
+        this.logger.info(
+          "GeminiLiveAdapter",
+          "Comenzando transmisión de audio del micrófono a Gemini Live (audio PCM 16kHz).",
+        );
+      } else if (this.sentAudioCount % 100 === 0) {
+        this.logger.info(
+          "GeminiLiveAdapter",
+          `Transmitidos ${this.sentAudioCount} chunks de audio a Gemini.`,
         );
       }
     } catch (e) {
@@ -445,34 +427,15 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
     this.logger.info("GeminiLiveAdapter", `Enviando texto Live: "${trimmed}"`);
 
     try {
-      const sessionObj = this.session as {
-        sendClientContent?: (params: unknown) => void;
-        send?: (params: unknown) => void;
-      };
-
-      if (typeof sessionObj.sendClientContent === "function") {
-        sessionObj.sendClientContent({
-          turns: [
-            {
-              role: "user",
-              parts: [{ text: trimmed }],
-            },
-          ],
-          turnComplete: true,
-        });
-      } else if (typeof sessionObj.send === "function") {
-        sessionObj.send({
-          clientContent: {
-            turns: [
-              {
-                role: "user",
-                parts: [{ text: trimmed }],
-              },
-            ],
-            turnComplete: true,
+      this.session.sendClientContent({
+        turns: [
+          {
+            role: "user",
+            parts: [{ text: trimmed }],
           },
-        });
-      }
+        ],
+        turnComplete: true,
+      });
     } catch (e) {
       this.logger.error("GeminiLiveAdapter", "Error al enviar texto:", e);
       const mapped = GeminiErrorMapper.map(e);
@@ -487,15 +450,7 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
     this.connected = false;
     if (this.session) {
       try {
-        const sessionObj = this.session as {
-          close?: () => void;
-          conn?: { close?: () => void };
-        };
-        if (typeof sessionObj.close === "function") {
-          sessionObj.close();
-        } else if (sessionObj.conn && typeof sessionObj.conn.close === "function") {
-          sessionObj.conn.close();
-        }
+        this.session.close();
       } catch {
         // ignore close error
       }

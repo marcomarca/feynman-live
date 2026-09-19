@@ -15,6 +15,7 @@ export class MicrophoneCapture {
   private audioContext: AudioContext | null = null;
   private sourceNode: MediaStreamAudioSourceNode | null = null;
   private processorNode: ScriptProcessorNode | null = null;
+  private muteNode: GainNode | null = null;
   private analyserNode: AnalyserNode | null = null;
   private animFrameId: number | null = null;
 
@@ -71,25 +72,18 @@ export class MicrophoneCapture {
         this.animFrameId = requestAnimationFrame(checkVolume);
       }
 
-      // Buffer size: 2048 or 4096 samples
-      const bufferSize = 2048;
+      // Buffer size: 4096 samples (~85ms chunks at 48kHz, optimal packet rate without flooding WebSocket)
+      const bufferSize = 4096;
       this.processorNode = this.audioContext.createScriptProcessor(bufferSize, 1, 1);
 
       this.processorNode.onaudioprocess = (event) => {
         if (!this.isCapturing) return;
         const inputData = event.inputBuffer.getChannelData(0);
 
-        // Echo gate: if AI is speaking, ignore low-energy speaker bleed to prevent echo barge-in loops
+        // While AI is speaking, suppress microphone streaming to prevent speaker-to-mic acoustic feedback
+        // from falsely triggering server-side VAD barge-in (interrupted: true).
         if (options.isAiSpeaking?.()) {
-          let sum = 0;
-          for (let i = 0; i < inputData.length; i++) {
-            sum += inputData[i] * inputData[i];
-          }
-          const rms = Math.sqrt(sum / inputData.length);
-          const threshold = options.bargeInThreshold ?? 0.045;
-          if (rms < threshold) {
-            return;
-          }
+          return;
         }
 
         const inputSampleRate = this.audioContext?.sampleRate || 44100;
@@ -100,8 +94,13 @@ export class MicrophoneCapture {
         options.onAudioChunk(pcm16Chunk);
       };
 
+      // Connect source to processor, and processor to a muted gain node (gain=0) before destination.
+      // This keeps ScriptProcessorNode alive and active without playing mic audio back into speakers!
+      this.muteNode = this.audioContext.createGain();
+      this.muteNode.gain.value = 0;
       this.sourceNode.connect(this.processorNode);
-      this.processorNode.connect(this.audioContext.destination);
+      this.processorNode.connect(this.muteNode);
+      this.muteNode.connect(this.audioContext.destination);
 
       this.isCapturing = true;
     } catch (e) {
@@ -116,6 +115,11 @@ export class MicrophoneCapture {
     if (this.animFrameId !== null) {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
+    }
+
+    if (this.muteNode) {
+      this.muteNode.disconnect();
+      this.muteNode = null;
     }
 
     if (this.processorNode) {

@@ -53,14 +53,15 @@ export class StudySessionService {
   private setupProviderListeners(): void {
     this.provider.onAudioChunk((chunk) => {
       if (this.state.status === "listening" || this.state.status === "speaking") {
-        if (this.state.status !== "speaking") {
-          // If user had pending voice chunks, save the user message now
-          this.flushUserAudioMessage();
-          this.setState({ status: "speaking", startedAt: Date.now() });
-        }
+        // Forward audio chunk immediately to renderer for lowest latency playback
         this.currentModelAudioChunks.push(chunk);
         for (const listener of this.audioListeners) {
           listener(chunk);
+        }
+
+        if (this.state.status !== "speaking") {
+          this.setState({ status: "speaking", startedAt: Date.now() });
+          this.flushUserAudioMessage();
         }
       }
     });
@@ -458,7 +459,10 @@ export class StudySessionService {
   sendAudio(chunk: Uint8Array): void {
     if (this.isMuted || this.isAwaitingTextResponse) return;
     if (this.state.status === "listening" || this.state.status === "speaking") {
-      this.currentUserAudioChunks.push(chunk);
+      // Only accumulate user speech chunks during listening mode, not while AI is speaking
+      if (this.state.status === "listening") {
+        this.currentUserAudioChunks.push(chunk);
+      }
       this.provider.sendAudio(chunk);
     }
   }

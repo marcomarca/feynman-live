@@ -12,14 +12,14 @@ export class AudioPlaybackQueue {
   private nextStartTime = 0;
   private activeSources: Set<AudioBufferSourceNode> = new Set();
   private sampleRate = 24000;
-  private leadTimeSeconds = 0.1;
+  private leadTimeSeconds = 0.15;
   private remainder: Uint8Array | null = null;
   private onVolumeChange?: (volume: number) => void;
   private onPlaybackEnded?: () => void;
 
   constructor(options?: PlaybackOptions) {
     this.sampleRate = options?.sampleRate || 24000;
-    this.leadTimeSeconds = options?.leadTimeSeconds ?? 0.1;
+    this.leadTimeSeconds = options?.leadTimeSeconds ?? 0.15;
     this.onVolumeChange = options?.onVolumeChange;
     this.onPlaybackEnded = options?.onPlaybackEnded;
   }
@@ -95,13 +95,8 @@ export class AudioPlaybackQueue {
     sourceNode.connect(ctx.destination);
 
     const currentTime = ctx.currentTime;
-    // Jitter buffer lead-time scheduling: prevents underruns between streaming network chunks
-    let startTime: number;
-    if (this.nextStartTime < currentTime + 0.01) {
-      startTime = currentTime + this.leadTimeSeconds;
-    } else {
-      startTime = this.nextStartTime;
-    }
+    // Continuous timeline cursor: gapless playback without artificial jitter gaps
+    const startTime = Math.max(currentTime, this.nextStartTime);
 
     sourceNode.start(startTime);
     this.nextStartTime = startTime + audioBuffer.duration;
@@ -118,6 +113,11 @@ export class AudioPlaybackQueue {
     };
   }
 
+  getQueueAheadMs(): number {
+    if (!this.audioContext) return 0;
+    return Math.max(0, Math.round((this.nextStartTime - this.audioContext.currentTime) * 1000));
+  }
+
   /**
    * Immediately clears all scheduled/playing audio nodes upon barge-in/interruption.
    */
@@ -132,9 +132,7 @@ export class AudioPlaybackQueue {
       }
     }
     this.activeSources.clear();
-    if (this.audioContext) {
-      this.nextStartTime = this.audioContext.currentTime;
-    }
+    this.nextStartTime = 0;
     this.onVolumeChange?.(0);
     this.onPlaybackEnded?.();
   }

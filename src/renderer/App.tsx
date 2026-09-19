@@ -44,7 +44,6 @@ export const App: React.FC = () => {
   const [isMuted, setIsMuted] = useState(false);
   const [isTutorVoiceMuted, setIsTutorVoiceMuted] = useState(false);
   const isTutorVoiceMutedRef = useRef(false);
-  const [_audioVolume, setAudioVolume] = useState(0);
 
   // Modals
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -53,18 +52,14 @@ export const App: React.FC = () => {
 
   // Audio Pipeline References
   const micCaptureRef = useRef<MicrophoneCapture>(new MicrophoneCapture());
-  const playbackQueueRef = useRef<AudioPlaybackQueue>(
-    new AudioPlaybackQueue({
-      onVolumeChange: (vol) => setAudioVolume(vol),
-    }),
-  );
+  const playbackQueueRef = useRef<AudioPlaybackQueue>(new AudioPlaybackQueue());
 
   const feedBottomRef = useRef<HTMLDivElement | null>(null);
 
-  // Auto-scroll feed on new messages or deltas
+  // Auto-scroll feed on new messages or deltas without restarting smooth animations continuously
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll trigger on new messages or text streaming
   useEffect(() => {
-    feedBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    feedBottomRef.current?.scrollIntoView({ behavior: "auto" });
   }, [activeChat?.messages.length, streamingText]);
 
   // Load chat list
@@ -221,9 +216,6 @@ export const App: React.FC = () => {
         isAiSpeaking: () => playbackQueueRef.current.isPlaying,
         onAudioChunk: (chunk) => {
           api.session.sendAudioChunk(chunk);
-        },
-        onVolumeChange: (vol) => {
-          setAudioVolume(vol);
         },
       });
 
