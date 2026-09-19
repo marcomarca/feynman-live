@@ -98,6 +98,7 @@ class MainActivity : ComponentActivity() {
                         is AppRoute.Settings -> {
                             SettingsScreen(
                                 settingsRepository = container.settingsRepository,
+                                secretStore = container.secretStore,
                                 onBack = {
                                     backStack.removeLastOrNull()
                                 },

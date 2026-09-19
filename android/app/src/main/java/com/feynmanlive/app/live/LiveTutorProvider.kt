@@ -22,6 +22,7 @@ data class LiveConnectConfig(
     val voice: String = "Puck",
     val modelName: String = "gemini-3.1-flash-live-preview",
     val conversationHistory: List<Pair<String, String>> = emptyList(),
+    val apiKey: String? = null,
 )
 
 interface LiveTutorProvider {

@@ -54,6 +54,7 @@ dependencies {
   implementation(libs.androidx.activity.compose)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.androidx.datastore.preferences)
+  implementation(libs.okhttp)
 
   // Arch Components
   implementation(libs.androidx.lifecycle.runtime.compose)

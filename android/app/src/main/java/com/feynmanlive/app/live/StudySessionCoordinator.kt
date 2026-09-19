@@ -50,6 +50,7 @@ class StudySessionCoordinator(
     private val timeouts: WatchdogTimeouts = WatchdogTimeouts(),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val audioBaseDir: File? = null,
+    private val secretStore: com.feynmanlive.app.domain.repository.SecretStore? = null,
 ) {
     private val _status = MutableStateFlow<SessionStatus>(SessionStatus.Idle)
     val status: StateFlow<SessionStatus> = _status.asStateFlow()
@@ -109,11 +110,13 @@ class StudySessionCoordinator(
             .filter { it.text.isNotBlank() }
             .map { it.role.name to it.text }
 
+        val apiKey = secretStore?.getApiKey()
         val config = LiveConnectConfig(
             tutorPrompt = compiledPrompt,
             studyMaterial = chatWithMessages.chat.context.studyMaterial,
             voice = chatWithMessages.chat.voice,
             conversationHistory = history,
+            apiKey = apiKey,
         )
 
         val connectResult = provider.connect(config)
@@ -388,10 +391,12 @@ class StudySessionCoordinator(
         val chatId = activeChatId ?: return
         val chat = chatRepository.getChat(chatId) ?: return
 
+        val apiKey = secretStore?.getApiKey()
         val config = LiveConnectConfig(
             tutorPrompt = StudyContextCompiler.compile(chat.chat.context),
             studyMaterial = chat.chat.context.studyMaterial,
             voice = chat.chat.voice,
+            apiKey = apiKey,
         )
 
         val retryResult = provider.connect(config)

@@ -31,3 +31,10 @@ interface SettingsRepository {
     suspend fun update(settings: AppSettings)
     suspend fun getSettings(): AppSettings
 }
+
+interface SecretStore {
+    suspend fun hasApiKey(): Boolean
+    suspend fun getApiKey(): String?
+    suspend fun saveApiKey(apiKey: String): Result<Unit>
+    suspend fun deleteApiKey(): Result<Unit>
+}

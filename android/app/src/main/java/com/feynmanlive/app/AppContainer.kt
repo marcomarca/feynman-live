@@ -3,15 +3,18 @@ package com.feynmanlive.app
 import android.content.Context
 import com.feynmanlive.app.data.repository.DataStoreSettingsRepository
 import com.feynmanlive.app.data.repository.SqliteChatRepository
+import com.feynmanlive.app.data.security.AndroidKeystoreSecretStore
 import com.feynmanlive.app.domain.repository.ChatRepository
+import com.feynmanlive.app.domain.repository.SecretStore
 import com.feynmanlive.app.domain.repository.SettingsRepository
+import com.feynmanlive.app.live.HybridLiveTutorProvider
 import com.feynmanlive.app.live.LiveTutorProvider
-import com.feynmanlive.app.live.SimulatedLiveTutorProvider
 import com.feynmanlive.app.live.StudySessionCoordinator
 
 interface AppContainer {
     val chatRepository: ChatRepository
     val settingsRepository: SettingsRepository
+    val secretStore: SecretStore
     val liveTutorProvider: LiveTutorProvider
     val studySessionCoordinator: StudySessionCoordinator
 }
@@ -25,8 +28,12 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
         DataStoreSettingsRepository(context)
     }
 
+    override val secretStore: SecretStore by lazy {
+        AndroidKeystoreSecretStore(context)
+    }
+
     override val liveTutorProvider: LiveTutorProvider by lazy {
-        SimulatedLiveTutorProvider()
+        HybridLiveTutorProvider()
     }
 
     override val studySessionCoordinator: StudySessionCoordinator by lazy {
@@ -34,6 +41,7 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
             context = context,
             chatRepository = chatRepository,
             provider = liveTutorProvider,
+            secretStore = secretStore,
         )
     }
 }
