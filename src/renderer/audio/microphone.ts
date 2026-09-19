@@ -1,10 +1,96 @@
 import { float32ToPcm16, resample } from "./pcm";
 
+export interface LocalVadOptions {
+  minSpeechDurationMs?: number;
+  silenceHangoverMs?: number;
+  onSpeechStart?: () => void;
+  onSpeechEnd?: () => void;
+}
+
+export class LocalVoiceActivityDetector {
+  private noiseFloor = 0.008;
+  private isSpeechActive = false;
+  private speechFramesDurationMs = 0;
+  private silenceFramesDurationMs = 0;
+
+  constructor(private readonly options: LocalVadOptions) {}
+
+  processFrame(
+    samples: Float32Array,
+    durationMs: number,
+  ): { isVoice: boolean; rms: number; peak: number } {
+    let sumSq = 0;
+    let peak = 0;
+    for (let i = 0; i < samples.length; i++) {
+      const abs = Math.abs(samples[i]);
+      if (abs > peak) peak = abs;
+      sumSq += abs * abs;
+    }
+    const rms = Math.sqrt(sumSq / (samples.length || 1));
+
+    const minSpeechMs = this.options.minSpeechDurationMs ?? 150;
+    const hangoverMs = this.options.silenceHangoverMs ?? 650;
+
+    const speechThreshold = Math.max(0.02, this.noiseFloor * 2.5);
+    const silenceThreshold = Math.max(0.012, this.noiseFloor * 1.5);
+
+    const isFrameVoice = rms > (this.isSpeechActive ? silenceThreshold : speechThreshold);
+
+    if (!isFrameVoice) {
+      this.noiseFloor = this.noiseFloor * 0.95 + rms * 0.05;
+    }
+
+    if (isFrameVoice) {
+      this.silenceFramesDurationMs = 0;
+      this.speechFramesDurationMs += durationMs;
+
+      if (!this.isSpeechActive && this.speechFramesDurationMs >= minSpeechMs) {
+        this.isSpeechActive = true;
+        this.options.onSpeechStart?.();
+      }
+    } else {
+      this.speechFramesDurationMs = 0;
+
+      if (this.isSpeechActive) {
+        this.silenceFramesDurationMs += durationMs;
+        if (this.silenceFramesDurationMs >= hangoverMs) {
+          this.isSpeechActive = false;
+          this.silenceFramesDurationMs = 0;
+          this.options.onSpeechEnd?.();
+        }
+      }
+    }
+
+    return { isVoice: this.isSpeechActive, rms, peak };
+  }
+
+  forceEnd(): void {
+    if (this.isSpeechActive) {
+      this.isSpeechActive = false;
+      this.speechFramesDurationMs = 0;
+      this.silenceFramesDurationMs = 0;
+      this.options.onSpeechEnd?.();
+    }
+  }
+
+  reset(): void {
+    this.isSpeechActive = false;
+    this.speechFramesDurationMs = 0;
+    this.silenceFramesDurationMs = 0;
+  }
+
+  get speechActive(): boolean {
+    return this.isSpeechActive;
+  }
+}
+
 export interface MicrophoneCaptureOptions {
   deviceId?: string;
   targetSampleRate?: number;
   chunkSizeMs?: number;
   onAudioChunk: (chunk: Uint8Array) => void;
+  onSpeechStart?: () => void;
+  onSpeechEnd?: () => void;
   onVolumeChange?: (volume: number) => void;
   isAiSpeaking?: () => boolean;
   bargeInThreshold?: number;
@@ -18,6 +104,7 @@ export class MicrophoneCapture {
   private muteNode: GainNode | null = null;
   private analyserNode: AnalyserNode | null = null;
   private animFrameId: number | null = null;
+  private vad: LocalVoiceActivityDetector | null = null;
 
   private isCapturing = false;
 
@@ -51,6 +138,13 @@ export class MicrophoneCapture {
 
       this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
 
+      this.vad = new LocalVoiceActivityDetector({
+        minSpeechDurationMs: 150,
+        silenceHangoverMs: 650,
+        onSpeechStart: options.onSpeechStart,
+        onSpeechEnd: options.onSpeechEnd,
+      });
+
       // Volume / Analyser
       if (options.onVolumeChange) {
         this.analyserNode = this.audioContext.createAnalyser();
@@ -80,13 +174,17 @@ export class MicrophoneCapture {
         if (!this.isCapturing) return;
         const inputData = event.inputBuffer.getChannelData(0);
 
+        const inputSampleRate = this.audioContext?.sampleRate || 44100;
+        const frameDurationMs = (inputData.length / inputSampleRate) * 1000;
+
+        // Run local VAD to detect speechStart and speechEnd
+        this.vad?.processFrame(inputData, frameDurationMs);
+
         // While AI is speaking, suppress microphone streaming to prevent speaker-to-mic acoustic feedback
         // from falsely triggering server-side VAD barge-in (interrupted: true).
         if (options.isAiSpeaking?.()) {
           return;
         }
-
-        const inputSampleRate = this.audioContext?.sampleRate || 44100;
 
         const resampled = resample(inputData, inputSampleRate, targetSampleRate);
         const pcm16Chunk = float32ToPcm16(resampled);
@@ -149,6 +247,15 @@ export class MicrophoneCapture {
       this.audioContext.close().catch(() => {});
       this.audioContext = null;
     }
+
+    if (this.vad) {
+      this.vad.forceEnd();
+      this.vad = null;
+    }
+  }
+
+  forceSpeechEnd(): void {
+    this.vad?.forceEnd();
   }
 
   get capturing(): boolean {

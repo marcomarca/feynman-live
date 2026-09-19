@@ -19,17 +19,23 @@ export interface LiveConnectInput {
 export interface LiveTutorProvider {
   connect(input: LiveConnectInput): Promise<Result<void, AppError>>;
   sendAudio(chunk: Uint8Array): void;
+  endAudioStream(): void;
   sendText(text: string): void;
   close(): Promise<void>;
   isConnected(): boolean;
+  getConnectionGeneration(): number;
 
   onAudioChunk(listener: (chunk: Uint8Array) => void): () => void;
   onTextDelta(listener: (delta: string) => void): () => void;
   onUserTranscription(listener: (text: string) => void): () => void;
+  onServerAck(listener: () => void): () => void;
+  onModelOutputStarted(listener: () => void): () => void;
   onTurnComplete(listener: () => void): () => void;
   onInterrupted(listener: () => void): () => void;
   onError(listener: (error: AppError) => void): () => void;
   onClose(listener: () => void): () => void;
+  onSessionResumptionUpdate?(listener: (handle: string) => void): () => void;
+  onGoAway?(listener: () => void): () => void;
 }
 
 function extractCloseInfo(event: unknown): { code: number; reason: string } {
@@ -91,19 +97,29 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
   private connected = false;
   private sentAudioCount = 0;
   private receivedAudioCount = 0;
+  private connectionGeneration = 0;
+  private lastResumptionHandle: string | null = null;
 
   private audioListeners: Set<(chunk: Uint8Array) => void> = new Set();
   private textDeltaListeners: Set<(delta: string) => void> = new Set();
   private userTranscriptionListeners: Set<(text: string) => void> = new Set();
+  private serverAckListeners: Set<() => void> = new Set();
+  private modelOutputStartedListeners: Set<() => void> = new Set();
   private turnCompleteListeners: Set<() => void> = new Set();
   private interruptedListeners: Set<() => void> = new Set();
   private errorListeners: Set<(error: AppError) => void> = new Set();
   private closeListeners: Set<() => void> = new Set();
+  private sessionResumptionListeners: Set<(handle: string) => void> = new Set();
+  private goAwayListeners: Set<() => void> = new Set();
 
   constructor(private readonly logger: LoggerPort = defaultLogger) {}
 
   isConnected(): boolean {
     return this.connected;
+  }
+
+  getConnectionGeneration(): number {
+    return this.connectionGeneration;
   }
 
   onAudioChunk(listener: (chunk: Uint8Array) => void): () => void {
@@ -119,6 +135,16 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
   onUserTranscription(listener: (text: string) => void): () => void {
     this.userTranscriptionListeners.add(listener);
     return () => this.userTranscriptionListeners.delete(listener);
+  }
+
+  onServerAck(listener: () => void): () => void {
+    this.serverAckListeners.add(listener);
+    return () => this.serverAckListeners.delete(listener);
+  }
+
+  onModelOutputStarted(listener: () => void): () => void {
+    this.modelOutputStartedListeners.add(listener);
+    return () => this.modelOutputStartedListeners.delete(listener);
   }
 
   onTurnComplete(listener: () => void): () => void {
@@ -141,20 +167,30 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
     return () => this.closeListeners.delete(listener);
   }
 
+  onSessionResumptionUpdate(listener: (handle: string) => void): () => void {
+    this.sessionResumptionListeners.add(listener);
+    return () => this.sessionResumptionListeners.delete(listener);
+  }
+
+  onGoAway(listener: () => void): () => void {
+    this.goAwayListeners.add(listener);
+    return () => this.goAwayListeners.delete(listener);
+  }
+
   async connect(input: LiveConnectInput): Promise<Result<void, AppError>> {
     if (this.connected) {
       await this.close();
     }
 
+    this.connectionGeneration += 1;
+    const currentGeneration = this.connectionGeneration;
+
     this.sentAudioCount = 0;
     this.receivedAudioCount = 0;
 
-    const keyPreview = input.apiKey
-      ? `${input.apiKey.slice(0, 6)}...${input.apiKey.slice(-4)}`
-      : "[empty]";
     this.logger.info(
       "GeminiLiveAdapter",
-      `Conectando con Gemini Live (modelo: ${GEMINI_LIVE_MODEL}, key: ${keyPreview}, modalidad: ${input.responseModality || "AUDIO"}, voz: ${input.voice || "Zephyr"})...`,
+      `Conectando con Gemini Live (gen: ${currentGeneration}, modelo: ${GEMINI_LIVE_MODEL}, key: [CONFIGURED], modalidad: ${input.responseModality || "AUDIO"}, voz: ${input.voice || "Zephyr"})...`,
     );
 
     try {
@@ -199,6 +235,10 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
             silenceDurationMs: 600,
           },
         },
+        contextWindowCompression: {
+          slidingWindow: {},
+        },
+        sessionResumption: {},
         inputAudioTranscription: {},
         outputAudioTranscription: {},
       };
@@ -208,6 +248,7 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
         config: liveConfig,
         callbacks: {
           onopen: () => {
+            if (this.connectionGeneration !== currentGeneration) return;
             this.logger.info(
               "GeminiLiveAdapter",
               "WebSocket conectado con Google Generative Language.",
@@ -215,9 +256,11 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
             this.connected = true;
           },
           onmessage: (msg: unknown) => {
+            if (this.connectionGeneration !== currentGeneration) return;
             this.handleServerMessage(msg);
           },
           onerror: (e: unknown) => {
+            if (this.connectionGeneration !== currentGeneration) return;
             this.logger.error("GeminiLiveAdapter", "Error de WebSocket recibido:", e);
             const mapped = GeminiErrorMapper.map(e);
             for (const listener of this.errorListeners) {
@@ -225,6 +268,7 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
             }
           },
           onclose: (e: unknown) => {
+            if (this.connectionGeneration !== currentGeneration) return;
             const { code, reason } = extractCloseInfo(e);
             this.logger.warn(
               "GeminiLiveAdapter",
@@ -251,13 +295,26 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
         },
       });
 
+      if (this.connectionGeneration !== currentGeneration) {
+        // Obsolete connection attempt, close immediately
+        session.close();
+        return err(
+          createAppError("CONNECTION_CLOSED", "Conexión descartada por nueva generación activa"),
+        );
+      }
+
       this.session = session;
       this.connected = true;
-      this.logger.info("GeminiLiveAdapter", "Sesión de Gemini Live inicializada correctamente.");
+      this.logger.info(
+        "GeminiLiveAdapter",
+        `Sesión de Gemini Live (gen ${currentGeneration}) inicializada correctamente.`,
+      );
       return ok(undefined);
     } catch (e) {
-      this.connected = false;
-      this.session = null;
+      if (this.connectionGeneration === currentGeneration) {
+        this.connected = false;
+        this.session = null;
+      }
       this.logger.error("GeminiLiveAdapter", "Error al conectar la sesión de Gemini Live:", e);
       const mapped = GeminiErrorMapper.map(e);
       return err(mapped);
@@ -272,6 +329,27 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
     // Log setup confirmation
     if (data.setupComplete) {
       this.logger.info("GeminiLiveAdapter", "Setup de sesión completado (setupComplete recibido).");
+    }
+
+    // Handle goAway
+    if (data.goAway) {
+      this.logger.warn("GeminiLiveAdapter", "Mensaje goAway recibido del servidor de Gemini Live.");
+      for (const listener of this.goAwayListeners) {
+        listener();
+      }
+    }
+
+    // Handle sessionResumptionUpdate
+    const resumptionUpdate = data.sessionResumptionUpdate as { newHandle?: string } | undefined;
+    if (resumptionUpdate?.newHandle) {
+      this.lastResumptionHandle = resumptionUpdate.newHandle;
+      this.logger.info(
+        "GeminiLiveAdapter",
+        `Handle de reanudación recibido: ${resumptionUpdate.newHandle.slice(0, 12)}...`,
+      );
+      for (const listener of this.sessionResumptionListeners) {
+        listener(resumptionUpdate.newHandle);
+      }
     }
 
     // 1. Check for barge-in / interruption
@@ -289,6 +367,9 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
         (serverContent.inputTranscription as { text?: string } | undefined) ||
         (serverContent.inputAudioTranscription as { text?: string } | undefined);
       if (inputTranscription?.text) {
+        for (const listener of this.serverAckListeners) {
+          listener();
+        }
         this.logger.info(
           "GeminiLiveAdapter",
           `Transcripción del usuario recibida: "${inputTranscription.text}"`,
@@ -300,6 +381,9 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
 
       const userTurn = serverContent.userTurn as { parts?: Array<{ text?: string }> } | undefined;
       if (userTurn && Array.isArray(userTurn.parts)) {
+        for (const listener of this.serverAckListeners) {
+          listener();
+        }
         for (const part of userTurn.parts) {
           if (part?.text) {
             this.logger.info(
@@ -318,6 +402,9 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
         (serverContent.outputTranscription as { text?: string } | undefined) ||
         (serverContent.outputAudioTranscription as { text?: string } | undefined);
       if (outputTranscription?.text) {
+        for (const listener of this.modelOutputStartedListeners) {
+          listener();
+        }
         this.logger.info(
           "GeminiLiveAdapter",
           `Transcripción del modelo recibida: "${outputTranscription.text}"`,
@@ -330,10 +417,12 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
       // 4. Process all parts for audio chunks and text
       const modelTurn = serverContent.modelTurn as Record<string, unknown> | undefined;
       if (modelTurn && Array.isArray(modelTurn.parts)) {
+        let hasModelContent = false;
         for (const part of modelTurn.parts) {
           if (part && typeof part === "object") {
             const partObj = part as Record<string, unknown>;
             if (partObj.text && typeof partObj.text === "string") {
+              hasModelContent = true;
               this.logger.info(
                 "GeminiLiveAdapter",
                 `Texto recibido del modelo: "${partObj.text.slice(0, 120)}"`,
@@ -354,6 +443,7 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
                   const binary = Buffer.from(inlineData.data, "base64");
                   const uint8 = new Uint8Array(binary.buffer, binary.byteOffset, binary.byteLength);
                   this.receivedAudioCount += 1;
+                  hasModelContent = true;
                   if (this.receivedAudioCount === 1) {
                     this.logger.info(
                       "GeminiLiveAdapter",
@@ -368,6 +458,11 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
                 }
               }
             }
+          }
+        }
+        if (hasModelContent) {
+          for (const listener of this.modelOutputStartedListeners) {
+            listener();
           }
         }
       }
@@ -408,11 +503,29 @@ export class GeminiLiveAdapter implements LiveTutorProvider {
       } else if (this.sentAudioCount % 100 === 0) {
         this.logger.info(
           "GeminiLiveAdapter",
-          `Transmitidos ${this.sentAudioCount} chunks de audio a Gemini.`,
+          `Encolados ${this.sentAudioCount} chunks de audio en la sesión local.`,
         );
       }
     } catch (e) {
       this.logger.error("GeminiLiveAdapter", "Error al enviar audio:", e);
+    }
+  }
+
+  endAudioStream(): void {
+    if (!this.connected || !this.session) {
+      return;
+    }
+
+    try {
+      this.session.sendRealtimeInput({
+        audioStreamEnd: true,
+      });
+      this.logger.info(
+        "GeminiLiveAdapter",
+        "Fin de flujo de audio transmitido (audioStreamEnd: true).",
+      );
+    } catch (e) {
+      this.logger.error("GeminiLiveAdapter", "Error al enviar audioStreamEnd:", e);
     }
   }
 

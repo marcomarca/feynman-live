@@ -214,6 +214,12 @@ export const App: React.FC = () => {
       await micCaptureRef.current.start({
         targetSampleRate: 16000,
         isAiSpeaking: () => playbackQueueRef.current.isPlaying,
+        onSpeechStart: () => {
+          api.session.notifySpeechStart();
+        },
+        onSpeechEnd: () => {
+          api.session.endAudioStream();
+        },
         onAudioChunk: (chunk) => {
           api.session.sendAudioChunk(chunk);
         },
@@ -237,6 +243,8 @@ export const App: React.FC = () => {
 
   const handleStopSession = async () => {
     if (!api) return;
+    micCaptureRef.current.forceSpeechEnd();
+    api.session.endAudioStream();
     micCaptureRef.current.stop();
     playbackQueueRef.current.clear();
     setStreamingText("");
@@ -252,6 +260,10 @@ export const App: React.FC = () => {
     if (!api) return;
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
+    if (nextMuted) {
+      micCaptureRef.current.forceSpeechEnd();
+      api.session.endAudioStream();
+    }
     await api.session.mute(nextMuted);
   };
 

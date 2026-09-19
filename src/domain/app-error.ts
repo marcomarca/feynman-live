@@ -10,6 +10,9 @@ export type AppErrorCode =
   | "MIC_PERMISSION_DENIED"
   | "AUDIO_DEVICE_ERROR"
   | "PROVIDER_ERROR"
+  | "TURN_ACK_TIMEOUT"
+  | "MODEL_START_TIMEOUT"
+  | "MODEL_STALLED_TIMEOUT"
   | "UNKNOWN";
 
 export interface AppError {

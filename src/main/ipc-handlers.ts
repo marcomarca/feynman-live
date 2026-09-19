@@ -213,6 +213,14 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
     sessionService.sendAudio(chunk);
   });
 
+  ipcMain.on(IPC_CHANNELS.SESSION_SPEECH_START, () => {
+    sessionService.handleSpeechStart();
+  });
+
+  ipcMain.on(IPC_CHANNELS.SESSION_AUDIO_STREAM_END, () => {
+    sessionService.handleAudioStreamEnd();
+  });
+
   // Audio Stream Out & State (Main -> Renderer)
   sessionService.onAudioChunk((chunk) => {
     const win = getMainWindow();

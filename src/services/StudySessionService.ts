@@ -21,6 +21,31 @@ function mergeUint8Arrays(chunks: Uint8Array[]): Uint8Array {
   return result;
 }
 
+export interface VoiceTurnRuntime {
+  turnId: number;
+  connectionGeneration: number;
+  speechStartedAt: number;
+  speechEndedAt?: number;
+  audioStreamEndedAt?: number;
+  firstServerAckAt?: number;
+  finalTranscriptAt?: number;
+  firstModelOutputAt?: number;
+  lastServerEventAt?: number;
+  retryCount: number;
+  serverAcknowledgedInput: boolean;
+}
+
+const MAX_USER_AUDIO_BYTES = 30 * 16000 * 2; // ~960,000 bytes (30s at 16kHz 16-bit mono)
+const WATCHDOG_A_TIMEOUT_MS = 5000;
+const WATCHDOG_B_TIMEOUT_MS = 10000;
+const WATCHDOG_C_TIMEOUT_MS = 15000;
+
+export interface WatchdogTimeouts {
+  ackTimeoutMs?: number;
+  startTimeoutMs?: number;
+  stalledTimeoutMs?: number;
+}
+
 export class StudySessionService {
   private state: SessionState = { status: "idle" };
   private stateListeners: Set<(state: SessionState) => void> = new Set();
@@ -34,6 +59,15 @@ export class StudySessionService {
   private currentUserTranscription = "";
   private currentModelAudioChunks: Uint8Array[] = [];
   private currentUserAudioChunks: Uint8Array[] = [];
+  private currentUserAudioBytes = 0;
+
+  private currentTurn: VoiceTurnRuntime | null = null;
+  private activeTurnId = 0;
+
+  private watchdogATimeout: ReturnType<typeof setTimeout> | null = null;
+  private watchdogBTimeout: ReturnType<typeof setTimeout> | null = null;
+  private watchdogCTimeout: ReturnType<typeof setTimeout> | null = null;
+  private readonly watchdogTimeouts: Required<WatchdogTimeouts>;
 
   private reconnectAttempt = 0;
   private isMuted = false;
@@ -46,12 +80,28 @@ export class StudySessionService {
     private readonly provider: LiveTutorProvider,
     private readonly chatStore?: ChatStorePort,
     private readonly recoveryPolicy: SessionRecoveryPolicy = new DefaultSessionRecoveryPolicy(),
+    watchdogTimeouts?: WatchdogTimeouts,
   ) {
+    this.watchdogTimeouts = {
+      ackTimeoutMs: watchdogTimeouts?.ackTimeoutMs ?? WATCHDOG_A_TIMEOUT_MS,
+      startTimeoutMs: watchdogTimeouts?.startTimeoutMs ?? WATCHDOG_B_TIMEOUT_MS,
+      stalledTimeoutMs: watchdogTimeouts?.stalledTimeoutMs ?? WATCHDOG_C_TIMEOUT_MS,
+    };
     this.setupProviderListeners();
   }
 
   private setupProviderListeners(): void {
     this.provider.onAudioChunk((chunk) => {
+      this.clearWatchdogB();
+      this.startWatchdogC();
+
+      if (this.currentTurn) {
+        if (!this.currentTurn.firstModelOutputAt) {
+          this.currentTurn.firstModelOutputAt = Date.now();
+        }
+        this.currentTurn.lastServerEventAt = Date.now();
+      }
+
       if (this.state.status === "listening" || this.state.status === "speaking") {
         // Forward audio chunk immediately to renderer for lowest latency playback
         this.currentModelAudioChunks.push(chunk);
@@ -67,6 +117,16 @@ export class StudySessionService {
     });
 
     this.provider.onTextDelta((delta) => {
+      this.clearWatchdogB();
+      this.startWatchdogC();
+
+      if (this.currentTurn) {
+        if (!this.currentTurn.firstModelOutputAt) {
+          this.currentTurn.firstModelOutputAt = Date.now();
+        }
+        this.currentTurn.lastServerEventAt = Date.now();
+      }
+
       this.currentModelText += delta;
       for (const listener of this.textDeltaListeners) {
         listener(delta);
@@ -74,10 +134,45 @@ export class StudySessionService {
     });
 
     this.provider.onUserTranscription((text) => {
+      this.clearWatchdogA();
+      if (this.currentTurn) {
+        this.currentTurn.serverAcknowledgedInput = true;
+        this.currentTurn.finalTranscriptAt = Date.now();
+        this.currentTurn.lastServerEventAt = Date.now();
+      }
+      this.startWatchdogB();
+
       this.currentUserTranscription += (this.currentUserTranscription ? " " : "") + text;
     });
 
+    this.provider.onServerAck(() => {
+      this.clearWatchdogA();
+      if (this.currentTurn) {
+        this.currentTurn.serverAcknowledgedInput = true;
+        if (!this.currentTurn.firstServerAckAt) {
+          this.currentTurn.firstServerAckAt = Date.now();
+        }
+        this.currentTurn.lastServerEventAt = Date.now();
+      }
+      this.startWatchdogB();
+    });
+
+    this.provider.onModelOutputStarted(() => {
+      this.clearWatchdogB();
+      this.startWatchdogC();
+      if (this.currentTurn) {
+        if (!this.currentTurn.firstModelOutputAt) {
+          this.currentTurn.firstModelOutputAt = Date.now();
+        }
+        this.currentTurn.lastServerEventAt = Date.now();
+      }
+    });
+
     this.provider.onTurnComplete(() => {
+      this.clearWatchdogs();
+      this.reconnectAttempt = 0; // Reset retry budget only on full successful turn completion
+      this.currentTurn = null;
+
       this.isAwaitingTextResponse = false;
       this.flushModelMessage();
       if (this.state.status === "speaking") {
@@ -86,6 +181,9 @@ export class StudySessionService {
     });
 
     this.provider.onInterrupted(() => {
+      this.clearWatchdogs();
+      this.currentTurn = null;
+
       this.isAwaitingTextResponse = false;
       this.flushModelMessage();
       for (const listener of this.interruptedListeners) {
@@ -97,11 +195,13 @@ export class StudySessionService {
     });
 
     this.provider.onError(async (error) => {
+      this.clearWatchdogs();
       this.isAwaitingTextResponse = false;
       await this.handleProviderError(error);
     });
 
     this.provider.onClose(async () => {
+      this.clearWatchdogs();
       this.isAwaitingTextResponse = false;
       if (this.state.status !== "idle" && this.state.status !== "stopping") {
         await this.handleProviderError(
@@ -111,9 +211,163 @@ export class StudySessionService {
     });
   }
 
+  handleSpeechStart(): void {
+    if (this.state.status !== "listening" && this.state.status !== "speaking") return;
+
+    if (this.state.status === "speaking") {
+      this.clearWatchdogs();
+      this.flushModelMessage();
+      this.setState({ status: "listening", startedAt: Date.now() });
+    }
+
+    this.activeTurnId += 1;
+    this.currentTurn = {
+      turnId: this.activeTurnId,
+      connectionGeneration: this.provider.getConnectionGeneration(),
+      speechStartedAt: Date.now(),
+      retryCount: 0,
+      serverAcknowledgedInput: false,
+    };
+
+    this.currentUserAudioChunks = [];
+    this.currentUserAudioBytes = 0;
+  }
+
+  handleAudioStreamEnd(): void {
+    if (this.state.status !== "listening" && this.state.status !== "speaking") return;
+
+    if (this.currentTurn) {
+      this.currentTurn.speechEndedAt = Date.now();
+      this.currentTurn.audioStreamEndedAt = Date.now();
+    }
+
+    this.provider.endAudioStream();
+    this.startWatchdogA();
+  }
+
+  getCurrentTurn(): VoiceTurnRuntime | null {
+    return this.currentTurn;
+  }
+
+  private startWatchdogA(): void {
+    this.clearWatchdogs();
+    this.watchdogATimeout = setTimeout(() => {
+      void this.handleWatchdogATriggered();
+    }, this.watchdogTimeouts.ackTimeoutMs);
+  }
+
+  private startWatchdogB(): void {
+    this.clearWatchdogA();
+    this.clearWatchdogB();
+    this.watchdogBTimeout = setTimeout(() => {
+      void this.handleWatchdogBTriggered();
+    }, this.watchdogTimeouts.startTimeoutMs);
+  }
+
+  private startWatchdogC(): void {
+    this.clearWatchdogA();
+    this.clearWatchdogB();
+    if (this.watchdogCTimeout) {
+      clearTimeout(this.watchdogCTimeout);
+    }
+    this.watchdogCTimeout = setTimeout(() => {
+      void this.handleWatchdogCTriggered();
+    }, this.watchdogTimeouts.stalledTimeoutMs);
+  }
+
+  private clearWatchdogA(): void {
+    if (this.watchdogATimeout) {
+      clearTimeout(this.watchdogATimeout);
+      this.watchdogATimeout = null;
+    }
+  }
+
+  private clearWatchdogB(): void {
+    if (this.watchdogBTimeout) {
+      clearTimeout(this.watchdogBTimeout);
+      this.watchdogBTimeout = null;
+    }
+  }
+
+  private clearWatchdogC(): void {
+    if (this.watchdogCTimeout) {
+      clearTimeout(this.watchdogCTimeout);
+      this.watchdogCTimeout = null;
+    }
+  }
+
+  private clearWatchdogs(): void {
+    this.clearWatchdogA();
+    this.clearWatchdogB();
+    this.clearWatchdogC();
+  }
+
+  private async handleWatchdogATriggered(): Promise<void> {
+    console.warn(
+      `[StudySessionService] Watchdog A activado: TURN_ACK_TIMEOUT tras ${this.watchdogTimeouts.ackTimeoutMs}ms sin reconocimiento del servidor`,
+    );
+    this.clearWatchdogs();
+
+    const turn = this.currentTurn;
+    const retryChunks =
+      turn &&
+      turn.retryCount === 0 &&
+      !turn.serverAcknowledgedInput &&
+      this.currentUserAudioChunks.length > 0
+        ? [...this.currentUserAudioChunks]
+        : undefined;
+
+    if (turn) {
+      turn.retryCount += 1;
+    }
+
+    const ackError = createAppError(
+      "TURN_ACK_TIMEOUT",
+      "El servidor no confirmó la recepción del audio del usuario.",
+      "Reconectando sesión...",
+      true,
+    );
+
+    await this.handleProviderError(ackError, retryChunks);
+  }
+
+  private async handleWatchdogBTriggered(): Promise<void> {
+    console.warn(
+      `[StudySessionService] Watchdog B activado: MODEL_START_TIMEOUT tras ${this.watchdogTimeouts.startTimeoutMs}ms sin salida del modelo`,
+    );
+    this.clearWatchdogs();
+
+    const startError = createAppError(
+      "MODEL_START_TIMEOUT",
+      "El modelo tardó demasiado en comenzar a responder.",
+      "Reconectando sesión...",
+      true,
+    );
+
+    await this.handleProviderError(startError);
+  }
+
+  private async handleWatchdogCTriggered(): Promise<void> {
+    console.warn(
+      `[StudySessionService] Watchdog C activado: MODEL_STALLED_TIMEOUT tras ${this.watchdogTimeouts.stalledTimeoutMs}ms sin eventos durante la respuesta`,
+    );
+    this.clearWatchdogs();
+    this.flushModelMessage();
+
+    const stalledError = createAppError(
+      "MODEL_STALLED_TIMEOUT",
+      "La respuesta del modelo se interrumpió y no continuó.",
+      "Reconectando sesión...",
+      true,
+    );
+
+    await this.handleProviderError(stalledError);
+  }
+
   private flushUserAudioMessage(explicitText?: string): void {
     if (!this.currentChatId || !this.chatStore) {
       this.currentUserAudioChunks = [];
+      this.currentUserAudioBytes = 0;
       this.currentUserTranscription = "";
       return;
     }
@@ -125,6 +379,7 @@ export class StudySessionService {
       // Explicitly discard ambient mic chunks so no phantom audio is attached to text.
       const text = explicitText.trim();
       this.currentUserAudioChunks = [];
+      this.currentUserAudioBytes = 0;
       this.currentUserTranscription = "";
 
       const optimisticMsg: ChatMessage = {
@@ -155,12 +410,14 @@ export class StudySessionService {
     if (!text) {
       // No transcribed speech text: discard accumulated ambient background audio chunks
       this.currentUserAudioChunks = [];
+      this.currentUserAudioBytes = 0;
       return;
     }
 
     const hasAudio = this.currentUserAudioChunks.length > 0;
     const mergedAudio = hasAudio ? mergeUint8Arrays(this.currentUserAudioChunks) : undefined;
     this.currentUserAudioChunks = [];
+    this.currentUserAudioBytes = 0;
 
     // Ensure audio has valid duration (at least 200ms -> 6400 bytes at 16kHz PCM16)
     const isValidAudio = Boolean(mergedAudio && mergedAudio.byteLength >= 3200);
@@ -394,7 +651,11 @@ export class StudySessionService {
     return ok(undefined);
   }
 
-  private async handleProviderError(error: AppError): Promise<void> {
+  private async handleProviderError(
+    error: AppError,
+    retryAudioChunks?: Uint8Array[],
+  ): Promise<void> {
+    this.clearWatchdogs();
     if (this.state.status === "idle" || this.state.status === "stopping") {
       return;
     }
@@ -439,8 +700,16 @@ export class StudySessionService {
         if (isErr(retryRes)) {
           await this.handleProviderError(retryRes.error);
         } else {
-          this.reconnectAttempt = 0;
           this.setState({ status: "listening", startedAt: Date.now() });
+
+          // If we have unacknowledged audio from the previous turn, replay once
+          if (retryAudioChunks && retryAudioChunks.length > 0) {
+            for (const chunk of retryAudioChunks) {
+              this.provider.sendAudio(chunk);
+            }
+            this.provider.endAudioStream();
+            this.startWatchdogA();
+          }
         }
       }, delay);
     } else {
@@ -462,6 +731,18 @@ export class StudySessionService {
       // Only accumulate user speech chunks during listening mode, not while AI is speaking
       if (this.state.status === "listening") {
         this.currentUserAudioChunks.push(chunk);
+        this.currentUserAudioBytes += chunk.byteLength;
+
+        // Bounded buffer: max 30s (~960,000 bytes at 16kHz PCM16)
+        while (
+          this.currentUserAudioBytes > MAX_USER_AUDIO_BYTES &&
+          this.currentUserAudioChunks.length > 1
+        ) {
+          const removed = this.currentUserAudioChunks.shift();
+          if (removed) {
+            this.currentUserAudioBytes -= removed.byteLength;
+          }
+        }
       }
       this.provider.sendAudio(chunk);
     }
@@ -487,10 +768,16 @@ export class StudySessionService {
 
   mute(muted: boolean): Result<void, AppError> {
     this.isMuted = muted;
+    if (muted) {
+      this.clearWatchdogs();
+      this.provider.endAudioStream();
+    }
     return ok(undefined);
   }
 
   async stop(): Promise<Result<void, AppError>> {
+    this.clearWatchdogs();
+    this.currentTurn = null;
     this.clearReconnectTimeout();
     this.isAwaitingTextResponse = false;
     this.setState({ status: "stopping" });

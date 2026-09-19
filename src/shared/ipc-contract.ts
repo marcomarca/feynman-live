@@ -49,6 +49,8 @@ export const IPC_CHANNELS = {
   SESSION_MUTE: "session:mute",
   SESSION_STOP: "session:stop",
   SESSION_AUDIO_IN: "session:audioIn", // Renderer -> Main (PCM16 16kHz)
+  SESSION_AUDIO_STREAM_END: "session:audioStreamEnd", // Renderer -> Main (explicit turn end)
+  SESSION_SPEECH_START: "session:speechStart", // Renderer -> Main (local VAD detected speech start)
   SESSION_AUDIO_OUT: "session:audioOut", // Main -> Renderer (PCM16 24kHz)
   SESSION_INTERRUPTED: "session:interrupted", // Main -> Renderer (clear audio queue)
   SESSION_STATE_CHANGED: "session:stateChanged", // Main -> Renderer
@@ -101,6 +103,8 @@ export interface FeynmanDesktopApi {
     mute(value: boolean): Promise<Result<void, AppError>>;
     stop(): Promise<Result<void, AppError>>;
     sendAudioChunk(chunk: Uint8Array): void;
+    endAudioStream(): void;
+    notifySpeechStart(): void;
     onAudioChunk(listener: (chunk: Uint8Array) => void): () => void;
     onTextDelta(listener: (delta: string) => void): () => void;
     onMessageComplete(listener: (message: ChatMessage) => void): () => void;

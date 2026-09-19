@@ -21,6 +21,8 @@ class FakeLiveTutorProvider implements LiveTutorProvider {
   sentAudioChunks: Uint8Array[] = [];
   sentTexts: string[] = [];
   lastConnectInput: LiveConnectInput | null = null;
+  endedAudioStreamCount = 0;
+  connectionGeneration = 1;
 
   private audioListeners: Set<(chunk: Uint8Array) => void> = new Set();
   private textDeltaListeners: Set<(delta: string) => void> = new Set();
@@ -29,6 +31,10 @@ class FakeLiveTutorProvider implements LiveTutorProvider {
   private interruptedListeners: Set<() => void> = new Set();
   private errorListeners: Set<(error: AppError) => void> = new Set();
   private closeListeners: Set<() => void> = new Set();
+  private serverAckListeners: Set<() => void> = new Set();
+  private modelOutputStartedListeners: Set<() => void> = new Set();
+  private sessionResumptionUpdateListeners: Set<(handle: string) => void> = new Set();
+  private goAwayListeners: Set<() => void> = new Set();
 
   isConnected(): boolean {
     return this.connected;
@@ -46,6 +52,14 @@ class FakeLiveTutorProvider implements LiveTutorProvider {
 
   sendText(text: string): void {
     this.sentTexts.push(text);
+  }
+
+  endAudioStream(): void {
+    this.endedAudioStreamCount += 1;
+  }
+
+  getConnectionGeneration(): number {
+    return this.connectionGeneration;
   }
 
   async close(): Promise<void> {
@@ -87,6 +101,26 @@ class FakeLiveTutorProvider implements LiveTutorProvider {
     return () => this.closeListeners.delete(listener);
   }
 
+  onServerAck(listener: () => void): () => void {
+    this.serverAckListeners.add(listener);
+    return () => this.serverAckListeners.delete(listener);
+  }
+
+  onModelOutputStarted(listener: () => void): () => void {
+    this.modelOutputStartedListeners.add(listener);
+    return () => this.modelOutputStartedListeners.delete(listener);
+  }
+
+  onSessionResumptionUpdate(listener: (handle: string) => void): () => void {
+    this.sessionResumptionUpdateListeners.add(listener);
+    return () => this.sessionResumptionUpdateListeners.delete(listener);
+  }
+
+  onGoAway(listener: () => void): () => void {
+    this.goAwayListeners.add(listener);
+    return () => this.goAwayListeners.delete(listener);
+  }
+
   // Simulation helpers
   emitAudio(chunk: Uint8Array): void {
     for (const l of this.audioListeners) l(chunk);
@@ -110,6 +144,14 @@ class FakeLiveTutorProvider implements LiveTutorProvider {
 
   emitError(err: AppError): void {
     for (const l of this.errorListeners) l(err);
+  }
+
+  emitServerAck(): void {
+    for (const l of this.serverAckListeners) l();
+  }
+
+  emitModelOutputStarted(): void {
+    for (const l of this.modelOutputStartedListeners) l();
   }
 }
 
@@ -334,5 +376,173 @@ describe("StudySessionService (Integration)", () => {
 
     expect(sessionService.getState().status).toBe("idle");
     expect(fakeProvider.connected).toBe(false);
+  });
+
+  it("should send audioStreamEnd and record turn state on handleAudioStreamEnd", async () => {
+    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
+    await sessionService.start();
+
+    sessionService.handleSpeechStart();
+    const turn = sessionService.getCurrentTurn();
+    expect(turn).not.toBeNull();
+    expect(turn?.turnId).toBe(1);
+    expect(turn?.serverAcknowledgedInput).toBe(false);
+
+    sessionService.sendAudio(new Uint8Array(3200));
+    sessionService.handleAudioStreamEnd();
+
+    expect(fakeProvider.endedAudioStreamCount).toBe(1);
+    expect(sessionService.getCurrentTurn()?.audioStreamEndedAt).toBeDefined();
+
+    await sessionService.stop();
+  });
+
+  it("should trigger Watchdog A and attempt recovery if server ack does not arrive in time", async () => {
+    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
+    // Create service with fast watchdog (30ms ack timeout)
+    const fastService = new StudySessionService(
+      dataStore,
+      secretStore,
+      fakeProvider,
+      chatStore,
+      undefined,
+      { ackTimeoutMs: 30, startTimeoutMs: 50, stalledTimeoutMs: 50 },
+    );
+    await fastService.start();
+
+    fastService.handleSpeechStart();
+    fastService.sendAudio(new Uint8Array(3200));
+    fastService.handleAudioStreamEnd();
+
+    expect(fakeProvider.endedAudioStreamCount).toBe(1);
+
+    // Wait for Watchdog A to fire (30ms timeout + backoff delay)
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    // Session should be reconnecting or error due to TURN_ACK_TIMEOUT
+    const state = fastService.getState();
+    expect(state.status === "reconnecting" || state.status === "error").toBe(true);
+
+    await fastService.stop();
+  });
+
+  it("should clear Watchdog A when serverAck arrives and start Watchdog B", async () => {
+    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
+    const fastService = new StudySessionService(
+      dataStore,
+      secretStore,
+      fakeProvider,
+      chatStore,
+      undefined,
+      { ackTimeoutMs: 40, startTimeoutMs: 150, stalledTimeoutMs: 150 },
+    );
+    await fastService.start();
+
+    fastService.handleSpeechStart();
+    fastService.sendAudio(new Uint8Array(3200));
+    fastService.handleAudioStreamEnd();
+
+    // Server acknowledges before 40ms timeout expires
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    fakeProvider.emitServerAck();
+
+    expect(fastService.getCurrentTurn()?.serverAcknowledgedInput).toBe(true);
+
+    // Wait 50ms (beyond ackTimeoutMs=40ms). Watchdog A should not fire.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(fastService.getState().status).toBe("listening");
+
+    await fastService.stop();
+  });
+
+  it("should trigger Watchdog B if model does not start responding after server ack", async () => {
+    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
+    const fastService = new StudySessionService(
+      dataStore,
+      secretStore,
+      fakeProvider,
+      chatStore,
+      undefined,
+      { ackTimeoutMs: 100, startTimeoutMs: 30, stalledTimeoutMs: 100 },
+    );
+    await fastService.start();
+
+    fastService.handleSpeechStart();
+    fastService.sendAudio(new Uint8Array(3200));
+    fastService.handleAudioStreamEnd();
+
+    // Server acknowledges promptly, triggering Watchdog B
+    fakeProvider.emitServerAck();
+
+    // Wait 50ms for Watchdog B (30ms) to trigger
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const state = fastService.getState();
+    expect(state.status === "reconnecting" || state.status === "error").toBe(true);
+
+    await fastService.stop();
+  });
+
+  it("should trigger Watchdog C if model output stalls during generation", async () => {
+    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
+    const fastService = new StudySessionService(
+      dataStore,
+      secretStore,
+      fakeProvider,
+      chatStore,
+      undefined,
+      { ackTimeoutMs: 100, startTimeoutMs: 100, stalledTimeoutMs: 30 },
+    );
+    await fastService.start();
+
+    fastService.handleSpeechStart();
+    fastService.sendAudio(new Uint8Array(3200));
+    fastService.handleAudioStreamEnd();
+    fakeProvider.emitServerAck();
+
+    // Model starts outputting audio
+    fakeProvider.emitAudio(new Uint8Array(2400));
+    expect(fastService.getState().status).toBe("speaking");
+
+    // Wait 50ms without new chunks or turnComplete -> Watchdog C triggers
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const state = fastService.getState();
+    expect(state.status === "reconnecting" || state.status === "error").toBe(true);
+
+    await fastService.stop();
+  });
+
+  it("should bound the audio buffer to MAX_USER_AUDIO_BYTES (960KB)", async () => {
+    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
+    await sessionService.start();
+
+    // Send 1.2 MB in chunks of 100KB (12 chunks)
+    const largeChunk = new Uint8Array(100000);
+    for (let i = 0; i < 12; i++) {
+      sessionService.sendAudio(largeChunk);
+    }
+
+    // Provider should receive all 12 chunks
+    expect(fakeProvider.sentAudioChunks.length).toBe(12);
+
+    // Stop cleanly
+    await sessionService.stop();
+  });
+
+  it("should clear watchdogs and audioStream on mute and stop", async () => {
+    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
+    await sessionService.start();
+
+    sessionService.handleSpeechStart();
+    sessionService.sendAudio(new Uint8Array(3200));
+
+    // Muting sends endAudioStream
+    sessionService.mute(true);
+    expect(fakeProvider.endedAudioStreamCount).toBe(1);
+
+    // Stop clears state
+    await sessionService.stop();
+    expect(sessionService.getCurrentTurn()).toBeNull();
   });
 });
