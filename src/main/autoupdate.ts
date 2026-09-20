@@ -1,6 +1,4 @@
-import { existsSync } from "node:fs";
 import https from "node:https";
-import path from "node:path";
 import type { UpdateCheckResult } from "../shared/ipc-contract";
 import type { AppLogger } from "../shared/logger";
 
@@ -19,6 +17,14 @@ function getElectron(): typeof import("electron") | null {
 }
 
 /**
+ * Comprueba si la aplicación se está ejecutando en modo Portable.
+ * Electron Builder establece PORTABLE_EXECUTABLE_DIR al lanzar el ejecutable portable.
+ */
+export function isPortable(): boolean {
+  return Boolean(process.env.PORTABLE_EXECUTABLE_DIR);
+}
+
+/**
  * Compara dos versiones siguiendo Semantic Versioning.
  * Retorna 1 si v1 > v2, -1 si v1 < v2, y 0 si son iguales.
  */
@@ -33,19 +39,6 @@ export function compareSemver(v1: string, v2: string): number {
     if (num1 < num2) return -1;
   }
   return 0;
-}
-
-/**
- * Comprueba si la aplicación se ejecuta desde una instalación de Squirrel.Windows.
- */
-export function isSquirrelInstalled(): boolean {
-  if (process.platform !== "win32") return false;
-  try {
-    const updateExe = path.resolve(path.dirname(process.execPath), "..", "Update.exe");
-    return existsSync(updateExe);
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -111,19 +104,20 @@ export async function checkGitHubReleasesFallback(
 
 /**
  * Comprueba manualmente el estado de las actualizaciones.
- * Si no está en un entorno Squirrel (ej: portable o desarrollo),
- * consulta directamente la API de GitHub Releases sin disparar errores de Squirrel.
+ * Si se ejecuta desde un archivo portable, consulta directamente GitHub Releases
+ * para evitar sobreescritura no autorizada del binario en caliente.
+ * En la versión instalada (NSIS), utiliza electron-updater.
  */
 export async function checkForUpdatesManual(): Promise<UpdateCheckResult> {
   const electron = getElectron();
   const currentVersion = electron?.app ? electron.app.getVersion() : "0.0.0";
 
-  if (!isSquirrelInstalled() || !electron?.autoUpdater) {
+  if (isPortable() || !electron?.app?.isPackaged) {
     return checkGitHubReleasesFallback(currentVersion);
   }
 
   try {
-    const { autoUpdater } = electron;
+    const { autoUpdater } = await import("electron-updater");
 
     return new Promise<UpdateCheckResult>((resolve) => {
       let isResolved = false;
@@ -134,13 +128,14 @@ export async function checkForUpdatesManual(): Promise<UpdateCheckResult> {
         autoUpdater.removeListener("error", onError);
       };
 
-      const onAvailable = () => {
+      const onAvailable = (info: { version?: string }) => {
         if (isResolved) return;
         isResolved = true;
         cleanup();
         resolve({
           status: "downloading",
           currentVersion,
+          latestVersion: info.version,
           message: "Hay una nueva versión disponible y se está descargando en segundo plano.",
         });
       };
@@ -186,10 +181,10 @@ export async function checkForUpdatesManual(): Promise<UpdateCheckResult> {
 }
 
 /**
- * Inicializa las actualizaciones automáticas en segundo plano.
+ * Inicializa las actualizaciones automáticas en segundo plano con electron-updater.
  * - Solo activo en producción (app.isPackaged) y fuera de entorno de pruebas.
- * - Consulta periódicamente GitHub Releases (cada 2 horas) usando update-electron-app.
- * - En versión instalada (Squirrel), descarga en segundo plano y muestra diálogo de reinicio.
+ * - Descarga silenciosa de actualizaciones para instalaciones NSIS.
+ * - Muestra un diálogo nativo cuando la descarga finaliza para reiniciar la app.
  */
 export async function init(logger: AppLogger): Promise<void> {
   loggerInstance = logger;
@@ -207,79 +202,95 @@ export async function init(logger: AppLogger): Promise<void> {
     return;
   }
 
-  try {
-    const { updateElectronApp, UpdateSourceType } = await import("update-electron-app");
-
-    updateElectronApp({
-      updateSource: {
-        type: UpdateSourceType.ElectronPublicUpdateService,
-        repo: "marcomarca/feynman-live",
-      },
-      updateInterval: "2 hours",
-      logger: {
-        log: (msg: string) => loggerInstance?.info("autoupdate", msg),
-        info: (msg: string) => loggerInstance?.info("autoupdate", msg),
-        warn: (msg: string) => loggerInstance?.warn("autoupdate", msg),
-        error: (msg: string) => loggerInstance?.error("autoupdate", msg),
-      },
-      notifyUser: true,
-      onNotifyUser: (info) => {
-        loggerInstance?.info(
-          "autoupdate",
-          `Actualización lista para aplicar: ${info.releaseName || "nueva versión"}`,
-        );
-
-        electron.dialog
-          .showMessageBox({
-            type: "info",
-            buttons: ["Reiniciar y actualizar", "Más tarde"],
-            defaultId: 0,
-            cancelId: 1,
-            title: "Actualización disponible",
-            message: "Una nueva versión de Feynman Live ha sido descargada.",
-            detail: `La versión ${info.releaseName || ""} está lista para aplicarse.\n¿Deseas reiniciar la aplicación ahora para completar la actualización?`,
-          })
-          .then((returnValue) => {
-            if (returnValue.response === 0) {
-              loggerInstance?.info(
-                "autoupdate",
-                "Usuario aceptó el reinicio. Cerrando e instalando actualización.",
-              );
-              electron.autoUpdater.quitAndInstall();
-            } else {
-              loggerInstance?.info(
-                "autoupdate",
-                "Usuario pospuso el reinicio. La actualización se aplicará al reiniciar.",
-              );
-            }
-          })
-          .catch((err) => {
-            loggerInstance?.error(
-              "autoupdate",
-              "Error al mostrar cuadro de diálogo de actualización",
-              err,
-            );
-          });
-      },
-    });
-
-    isInitialized = true;
+  if (isPortable()) {
     loggerInstance.info(
       "autoupdate",
-      "Servicio de actualización automática inicializado correctamente",
+      "Modo portable detectado: Auto-descarga directa desactivada para proteger el ejecutable.",
     );
+    return;
+  }
+
+  try {
+    const { autoUpdater } = await import("electron-updater");
+
+    autoUpdater.logger = {
+      info: (msg: string) => loggerInstance?.info("autoupdate", msg),
+      warn: (msg: string) => loggerInstance?.warn("autoupdate", msg),
+      error: (msg: string) => loggerInstance?.error("autoupdate", msg),
+      debug: (msg: string) => loggerInstance?.info("autoupdate", msg),
+    };
+
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+
+    autoUpdater.on("update-downloaded", (info) => {
+      loggerInstance?.info(
+        "autoupdate",
+        `Actualización descargada y lista para aplicar: ${info.version || "nueva versión"}`,
+      );
+
+      if (!electron.dialog) return;
+
+      electron.dialog
+        .showMessageBox({
+          type: "info",
+          buttons: ["Reiniciar y actualizar", "Más tarde"],
+          defaultId: 0,
+          cancelId: 1,
+          title: "Actualización disponible",
+          message: "Una nueva versión de Feynman Live ha sido descargada.",
+          detail: `La versión ${info.version || ""} está lista para aplicarse.\n¿Deseas reiniciar la aplicación ahora para completar la actualización?`,
+        })
+        .then((returnValue) => {
+          if (returnValue.response === 0) {
+            loggerInstance?.info(
+              "autoupdate",
+              "Usuario aceptó el reinicio. Cerrando e instalando actualización.",
+            );
+            autoUpdater.quitAndInstall();
+          } else {
+            loggerInstance?.info(
+              "autoupdate",
+              "Usuario pospuso el reinicio. La actualización se aplicará al reiniciar.",
+            );
+          }
+        })
+        .catch((err) => {
+          loggerInstance?.error(
+            "autoupdate",
+            "Error al mostrar cuadro de diálogo de actualización",
+            err,
+          );
+        });
+    });
+
+    // Comprobar actualizaciones cada 2 horas
+    autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+      loggerInstance?.warn(
+        "autoupdate",
+        `Error en checkForUpdates inicial: ${err?.message || err}`,
+      );
+    });
+
+    setInterval(
+      () => {
+        autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+          loggerInstance?.warn("autoupdate", `Error en chequeo periódico: ${err?.message || err}`);
+        });
+      },
+      2 * 60 * 60 * 1000,
+    );
+
+    isInitialized = true;
+    loggerInstance.info("autoupdate", "Servicio electron-updater inicializado correctamente");
   } catch (err) {
-    loggerInstance.error(
-      "autoupdate",
-      "Error al inicializar el servicio de actualización automática",
-      err,
-    );
+    loggerInstance.error("autoupdate", "Error al inicializar el servicio electron-updater", err);
   }
 }
 
 export const AutoUpdateService = {
   init,
-  isSquirrelInstalled,
+  isPortable,
   checkForUpdatesManual,
   checkGitHubReleasesFallback,
   compareSemver,
