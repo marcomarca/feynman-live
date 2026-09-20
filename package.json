@@ -9,6 +9,7 @@
     "dev:main": "bun build src/main/main.ts --target=node --outfile=dist-electron/main.js --external=electron",
     "dev:preload": "bun build src/preload/preload.ts --format=cjs --target=node --outfile=dist-electron/preload.js --external=electron",
     "dev:electron": "electron .",
+    "dev:android": "bun scripts/run-android.ts",
     "start": "bun run build && electron .",
     "dev": "bun run dev:main && bun run dev:preload && vite",
     "build:main": "bun build src/main/main.ts --target=node --outfile=dist-electron/main.js --external=electron",

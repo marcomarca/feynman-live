@@ -30,7 +30,9 @@ class DataStoreSettingsRepository(private val context: Context) : SettingsReposi
             defaultVoice = preferences[PreferencesKeys.DEFAULT_VOICE] ?: "Puck",
             themeMode = preferences[PreferencesKeys.THEME_MODE] ?: "SYSTEM",
             includeHistoryOnResume = preferences[PreferencesKeys.INCLUDE_HISTORY_ON_RESUME] ?: true,
-            modelName = preferences[PreferencesKeys.MODEL_NAME] ?: "gemini-3.1-flash-live-preview",
+            modelName = preferences[PreferencesKeys.MODEL_NAME]
+                ?.takeIf { !it.contains("transcribe") }
+                ?: "gemini-3.1-flash-live-preview",
             diagnosticsEnabled = preferences[PreferencesKeys.DIAGNOSTICS_ENABLED] ?: false,
         )
     }

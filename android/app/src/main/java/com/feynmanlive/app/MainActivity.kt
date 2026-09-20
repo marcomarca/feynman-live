@@ -99,6 +99,7 @@ class MainActivity : ComponentActivity() {
                             SettingsScreen(
                                 settingsRepository = container.settingsRepository,
                                 secretStore = container.secretStore,
+                                apiTester = container.geminiApiTester,
                                 onBack = {
                                     backStack.removeLastOrNull()
                                 },

@@ -1,17 +1,21 @@
 package com.feynmanlive.app.live
 
 import android.util.Base64
+import android.util.Log
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okio.ByteString
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
@@ -25,6 +29,10 @@ class GeminiLiveWebSocketProvider(
         .build(),
 ) : LiveTutorProvider {
 
+    companion object {
+        private const val TAG = "GeminiLive"
+    }
+
     private val _events = MutableSharedFlow<LiveEvent>(replay = 0, extraBufferCapacity = 100)
     override val events: Flow<LiveEvent> = _events.asSharedFlow()
 
@@ -32,10 +40,12 @@ class GeminiLiveWebSocketProvider(
     private val connected = AtomicBoolean(false)
     private val generation = AtomicLong(1)
     private val scope = CoroutineScope(Dispatchers.IO)
+    private var activeSetupDeferred: CompletableDeferred<Unit>? = null
 
     override suspend fun connect(config: LiveConnectConfig): Result<Unit> {
         val apiKey = config.apiKey?.trim()
         if (apiKey.isNullOrEmpty()) {
+            Log.w(TAG, "Intento de conexión sin API Key configurada.")
             return Result.failure(
                 IllegalStateException("No hay API Key de Gemini configurada. Por favor, añádela en Configuración.")
             )
@@ -43,8 +53,11 @@ class GeminiLiveWebSocketProvider(
 
         close()
         val currentGen = generation.incrementAndGet()
+        val deferred = CompletableDeferred<Unit>()
+        activeSetupDeferred = deferred
 
-        val endpointUrl = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=$apiKey"
+        val endpointUrl = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$apiKey"
+        Log.i(TAG, "Iniciando WebSocket con Gemini Live (gen: $currentGen)...")
         val request = Request.Builder().url(endpointUrl).build()
 
         val listener = object : WebSocketListener() {
@@ -53,29 +66,37 @@ class GeminiLiveWebSocketProvider(
                     webSocket.close(1000, "Stale generation")
                     return
                 }
-                connected.set(true)
+                Log.i(TAG, "WebSocket conectado exitosamente (HTTP ${response.code}). Enviando setup...")
 
                 // Send setup message
                 val setupJson = buildSetupMessage(config)
                 webSocket.send(setupJson.toString())
-                scope.launch {
-                    _events.emit(LiveEvent.ServerAck)
-                }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (generation.get() != currentGen) return
+                Log.d(TAG, "Mensaje entrante WebSocket (texto): ${text.take(300)}")
+                handleIncomingMessage(text)
+            }
+
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                if (generation.get() != currentGen) return
+                val text = bytes.utf8()
+                Log.d(TAG, "Mensaje entrante WebSocket (bytes): ${text.take(300)}")
                 handleIncomingMessage(text)
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 if (generation.get() != currentGen) return
+                val respMsg = if (response != null) " (HTTP ${response.code}: ${response.message})" else ""
+                Log.e(TAG, "Fallo en WebSocket Gemini Live$respMsg: ${t.message}", t)
                 connected.set(false)
+                activeSetupDeferred?.completeExceptionally(t)
                 scope.launch {
                     _events.emit(
                         LiveEvent.Error(
                             code = "NETWORK_ERROR",
-                            message = t.localizedMessage ?: "Error de conexión con Gemini Live",
+                            message = (t.localizedMessage ?: "Error de conexión con Gemini Live") + respMsg,
                             retryable = true,
                         )
                     )
@@ -83,11 +104,13 @@ class GeminiLiveWebSocketProvider(
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                Log.w(TAG, "WebSocket cerrándose del servidor: code=$code, reason=$reason")
                 webSocket.close(1000, null)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 if (generation.get() != currentGen) return
+                Log.i(TAG, "WebSocket cerrado: code=$code, reason=$reason")
                 connected.set(false)
                 scope.launch {
                     _events.emit(LiveEvent.Closed)
@@ -96,7 +119,19 @@ class GeminiLiveWebSocketProvider(
         }
 
         webSocket = client.newWebSocket(request, listener)
-        return Result.success(Unit)
+        return try {
+            withTimeout(15000L) {
+                deferred.await()
+            }
+            connected.set(true)
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "Fallo al conectar o completar setup de Gemini Live: ${e.message}", e)
+            webSocket?.close(1000, "Setup failed")
+            webSocket = null
+            connected.set(false)
+            Result.failure(e)
+        }
     }
 
     private fun handleIncomingMessage(text: String) {
@@ -107,17 +142,54 @@ class GeminiLiveWebSocketProvider(
                 val err = json.getJSONObject("error")
                 val code = err.optString("code", "API_ERROR")
                 val message = err.optString("message", "Error de Gemini API")
+                Log.e(TAG, "Error retornado por Gemini API: $code - $message")
+                activeSetupDeferred?.completeExceptionally(IllegalStateException("$code: $message"))
                 scope.launch {
                     _events.emit(LiveEvent.Error(code, message, retryable = false))
                 }
                 return
             }
 
+            if (json.has("setupComplete")) {
+                Log.i(TAG, "Setup confirmado por el servidor (setupComplete).")
+                activeSetupDeferred?.complete(Unit)
+            }
+
             if (json.has("serverContent")) {
                 val serverContent = json.getJSONObject("serverContent")
 
+                // Handle transcription of user speech if provided
+                val userTranscript = when {
+                    serverContent.has("inputTranscription") -> serverContent.getJSONObject("inputTranscription").optString("text")
+                    serverContent.has("inputAudioTranscription") -> serverContent.getJSONObject("inputAudioTranscription").optString("text")
+                    else -> null
+                }
+                if (!userTranscript.isNullOrBlank()) {
+                    Log.d(TAG, "Transcripción de usuario recibida: $userTranscript")
+                    scope.launch {
+                        _events.emit(LiveEvent.ServerAck)
+                        _events.emit(LiveEvent.UserTranscription(userTranscript))
+                    }
+                }
+
+                // Handle transcription of model output speech if provided
+                val modelTranscript = when {
+                    serverContent.has("outputTranscription") -> serverContent.getJSONObject("outputTranscription").optString("text")
+                    serverContent.has("outputAudioTranscription") -> serverContent.getJSONObject("outputAudioTranscription").optString("text")
+                    else -> null
+                }
+                if (!modelTranscript.isNullOrBlank()) {
+                    Log.d(TAG, "Transcripción del modelo recibida: $modelTranscript")
+                    scope.launch {
+                        _events.emit(LiveEvent.ServerAck)
+                        _events.emit(LiveEvent.ModelOutputStarted)
+                        _events.emit(LiveEvent.TextDelta(modelTranscript))
+                    }
+                }
+
                 if (serverContent.has("modelTurn")) {
                     scope.launch {
+                        _events.emit(LiveEvent.ServerAck)
                         _events.emit(LiveEvent.ModelOutputStarted)
                     }
 
@@ -147,19 +219,21 @@ class GeminiLiveWebSocketProvider(
                 }
 
                 if (serverContent.optBoolean("turnComplete", false)) {
+                    Log.d(TAG, "Turno del modelo completado.")
                     scope.launch {
                         _events.emit(LiveEvent.TurnComplete)
                     }
                 }
 
                 if (serverContent.optBoolean("interrupted", false)) {
+                    Log.i(TAG, "Interrupción detectada (barge-in).")
                     scope.launch {
                         _events.emit(LiveEvent.Interrupted)
                     }
                 }
             }
         } catch (e: Exception) {
-            // Error parsing message, ignore malformed frame
+            Log.e(TAG, "Error parseando mensaje entrante: ${e.message}", e)
         }
     }
 
@@ -178,15 +252,20 @@ class GeminiLiveWebSocketProvider(
             }
         }
 
+        val voiceName = config.voice.ifBlank { "Zephyr" }
+        val rawModel = config.modelName.ifBlank { "gemini-3.1-flash-live-preview" }
+        val formattedModel = if (rawModel.startsWith("models/")) rawModel else "models/$rawModel"
+        Log.i(TAG, "Configurando sesión con modelo: $formattedModel y voz: $voiceName")
+
         return JSONObject().apply {
             put("setup", JSONObject().apply {
-                put("model", "models/gemini-2.0-flash-exp")
+                put("model", formattedModel)
                 put("generationConfig", JSONObject().apply {
                     put("responseModalities", JSONArray().apply { put("AUDIO") })
                     put("speechConfig", JSONObject().apply {
                         put("voiceConfig", JSONObject().apply {
                             put("prebuiltVoiceConfig", JSONObject().apply {
-                                put("voiceName", config.voice)
+                                put("voiceName", voiceName)
                             })
                         })
                     })
@@ -196,6 +275,8 @@ class GeminiLiveWebSocketProvider(
                         put(JSONObject().apply { put("text", fullSystemPrompt) })
                     })
                 })
+                put("inputAudioTranscription", JSONObject())
+                put("outputAudioTranscription", JSONObject())
             })
         }
     }
@@ -205,11 +286,9 @@ class GeminiLiveWebSocketProvider(
         val base64 = Base64.encodeToString(pcm16, Base64.NO_WRAP)
         val json = JSONObject().apply {
             put("realtimeInput", JSONObject().apply {
-                put("mediaChunks", JSONArray().apply {
-                    put(JSONObject().apply {
-                        put("mimeType", "audio/pcm;rate=16000")
-                        put("data", base64)
-                    })
+                put("audio", JSONObject().apply {
+                    put("mimeType", "audio/pcm;rate=16000")
+                    put("data", base64)
                 })
             })
         }
@@ -218,9 +297,10 @@ class GeminiLiveWebSocketProvider(
 
     override suspend fun endAudioStream() {
         if (!connected.get()) return
+        Log.d(TAG, "Enviando audioStreamEnd a Gemini Live")
         val json = JSONObject().apply {
             put("realtimeInput", JSONObject().apply {
-                put("endOfTurn", true)
+                put("audioStreamEnd", true)
             })
         }
         webSocket?.send(json.toString())
@@ -228,6 +308,7 @@ class GeminiLiveWebSocketProvider(
 
     override suspend fun sendText(text: String): Result<Unit> {
         if (!connected.get()) return Result.failure(IllegalStateException("No conectado"))
+        Log.i(TAG, "Enviando texto a Gemini Live: \"${text.take(100)}\"")
         val json = JSONObject().apply {
             put("clientContent", JSONObject().apply {
                 put("turns", JSONArray().apply {
@@ -247,6 +328,8 @@ class GeminiLiveWebSocketProvider(
 
     override suspend fun close() {
         connected.set(false)
+        activeSetupDeferred?.cancel()
+        activeSetupDeferred = null
         webSocket?.close(1000, "Cierre normal")
         webSocket = null
         _events.emit(LiveEvent.Closed)

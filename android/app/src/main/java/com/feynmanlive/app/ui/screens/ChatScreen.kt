@@ -255,7 +255,8 @@ fun ChatScreen(
                                     textInput = ""
                                     scope.launch {
                                         if (sessionStatus is SessionStatus.Idle) {
-                                            coordinator.start(ChatId(chatId), scope)
+                                            val startRes = coordinator.start(ChatId(chatId), scope)
+                                            if (startRes.isFailure) return@launch
                                         }
                                         coordinator.sendText(toSend)
                                     }

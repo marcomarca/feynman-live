@@ -4,6 +4,7 @@ import android.content.Context
 import com.feynmanlive.app.data.repository.DataStoreSettingsRepository
 import com.feynmanlive.app.data.repository.SqliteChatRepository
 import com.feynmanlive.app.data.security.AndroidKeystoreSecretStore
+import com.feynmanlive.app.domain.diagnostics.GeminiApiTester
 import com.feynmanlive.app.domain.repository.ChatRepository
 import com.feynmanlive.app.domain.repository.SecretStore
 import com.feynmanlive.app.domain.repository.SettingsRepository
@@ -17,6 +18,7 @@ interface AppContainer {
     val secretStore: SecretStore
     val liveTutorProvider: LiveTutorProvider
     val studySessionCoordinator: StudySessionCoordinator
+    val geminiApiTester: GeminiApiTester
 }
 
 class DefaultAppContainer(private val context: Context) : AppContainer {
@@ -36,12 +38,19 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
         HybridLiveTutorProvider()
     }
 
+    override val geminiApiTester: GeminiApiTester by lazy {
+        GeminiApiTester()
+    }
+
     override val studySessionCoordinator: StudySessionCoordinator by lazy {
         StudySessionCoordinator(
             context = context,
             chatRepository = chatRepository,
             provider = liveTutorProvider,
+            recorder = com.feynmanlive.app.audio.AndroidPcmRecorder(),
+            player = com.feynmanlive.app.audio.AndroidPcmPlayer(),
             secretStore = secretStore,
+            settingsRepository = settingsRepository,
         )
     }
 }

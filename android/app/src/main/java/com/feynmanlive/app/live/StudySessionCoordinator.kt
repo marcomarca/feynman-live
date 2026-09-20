@@ -36,9 +36,9 @@ sealed interface SessionStatus {
 }
 
 data class WatchdogTimeouts(
-    val ackTimeoutMs: Long = 5000L,
-    val startTimeoutMs: Long = 10000L,
-    val stalledTimeoutMs: Long = 15000L,
+    val ackTimeoutMs: Long = 12000L,
+    val startTimeoutMs: Long = 15000L,
+    val stalledTimeoutMs: Long = 20000L,
 )
 
 class StudySessionCoordinator(
@@ -51,6 +51,7 @@ class StudySessionCoordinator(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val audioBaseDir: File? = null,
     private val secretStore: com.feynmanlive.app.domain.repository.SecretStore? = null,
+    private val settingsRepository: com.feynmanlive.app.domain.repository.SettingsRepository? = null,
 ) {
     private val _status = MutableStateFlow<SessionStatus>(SessionStatus.Idle)
     val status: StateFlow<SessionStatus> = _status.asStateFlow()
@@ -111,10 +112,14 @@ class StudySessionCoordinator(
             .map { it.role.name to it.text }
 
         val apiKey = secretStore?.getApiKey()
+        val currentSettings = settingsRepository?.getSettings()
+        val activeModel = currentSettings?.modelName ?: "gemini-2.0-flash-realtime-exp"
+
         val config = LiveConnectConfig(
             tutorPrompt = compiledPrompt,
             studyMaterial = chatWithMessages.chat.context.studyMaterial,
             voice = chatWithMessages.chat.voice,
+            modelName = activeModel,
             conversationHistory = history,
             apiKey = apiKey,
         )
@@ -226,13 +231,15 @@ class StudySessionCoordinator(
             }
 
             is LiveEvent.ServerAck -> {
-                clearWatchdogA()
-                currentTurn?.apply {
-                    serverAcknowledgedInput = true
-                    if (firstServerAckAt == null) firstServerAckAt = System.currentTimeMillis()
+                if (_status.value is SessionStatus.AwaitingServerAck || _status.value is SessionStatus.UserSpeaking) {
+                    clearWatchdogA()
+                    currentTurn?.apply {
+                        serverAcknowledgedInput = true
+                        if (firstServerAckAt == null) firstServerAckAt = System.currentTimeMillis()
+                    }
+                    startWatchdogB()
+                    _status.value = SessionStatus.AwaitingModelOutput
                 }
-                startWatchdogB()
-                _status.value = SessionStatus.AwaitingModelOutput
             }
 
             is LiveEvent.ModelOutputStarted -> {
@@ -506,7 +513,23 @@ class StudySessionCoordinator(
             text = trimmed,
         )
 
-        return provider.sendText(trimmed)
+        activeTurnId++
+        currentTurn = VoiceTurnRuntime(
+            turnId = activeTurnId,
+            connectionGeneration = provider.getConnectionGeneration(),
+            speechStartedAt = System.currentTimeMillis(),
+            retryCount = 0,
+            serverAcknowledgedInput = true,
+        )
+        _status.value = SessionStatus.AwaitingModelOutput
+        startWatchdogB()
+
+        val sendResult = provider.sendText(trimmed)
+        if (sendResult.isFailure) {
+            clearWatchdogs()
+            _status.value = SessionStatus.Listening
+        }
+        return sendResult
     }
 
     fun mute(muted: Boolean) {

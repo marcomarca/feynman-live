@@ -123,13 +123,27 @@ bun run package:dir
 
 ---
 
-## 8. Tabla Resumen de Comandos
+---
+
+## 8. Desarrollo en Android
+
+Para depurar en Android sin generar ni instalar APKs manualmente:
+
+```bash
+# Compila incrementalmente, instala vía ADB y lanza la app en el dispositivo/emulador
+bun run dev:android
+```
+
+---
+
+## 9. Tabla Resumen de Comandos
 
 | Comando | Acción |
 | :--- | :--- |
 | `bun install` | Instala dependencias del proyecto |
 | `bun run dev` | Compila scripts e inicia servidor Vite |
 | `bun run dev:electron` | Lanza ventana Electron conectada a Vite |
+| `bun run dev:android` | Compila, instala y lanza app Android en modo Debug |
 | `bun start` | Compila y corre Electron en modo local producción |
 | `bun test` | Ejecuta tests con Bun |
 | `bun run typecheck` | Ejecuta `tsc --noEmit` |
