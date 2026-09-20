@@ -12,6 +12,7 @@ import { SettingsService } from "../services/SettingsService";
 import { StudySessionService } from "../services/StudySessionService";
 import { AppLogger } from "../shared/logger";
 import { AutostartManager } from "./autostart";
+import { AutoUpdateService } from "./autoupdate";
 import { registerIpcHandlers } from "./ipc-handlers";
 import { ShortcutManager } from "./shortcuts";
 import { TrayManager } from "./tray";
@@ -86,6 +87,9 @@ if (!gotTheLock) {
       }
     });
     trayManager.setupTray();
+
+    // Initialize AutoUpdate Service
+    AutoUpdateService.init(logger);
 
     app.on("activate", () => {
       windowManager.showAndFocus();

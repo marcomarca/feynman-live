@@ -20,6 +20,6 @@ try {
   });
   console.log("Connected successfully to session!");
   await session.close();
-} catch (e: any) {
-  console.error("Caught error in live.connect:", e?.message || e);
+} catch (e: unknown) {
+  console.error("Caught error in live.connect:", (e as Error)?.message || e);
 }

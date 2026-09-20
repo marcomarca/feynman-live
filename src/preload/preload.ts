@@ -123,6 +123,11 @@ const api: FeynmanDesktopApi = {
     minimize: () => ipcRenderer.send(IPC_CHANNELS.WINDOW_MINIMIZE),
     hide: () => ipcRenderer.send(IPC_CHANNELS.WINDOW_HIDE),
   },
+
+  updater: {
+    check: () => ipcRenderer.invoke(IPC_CHANNELS.AUTOUPDATE_CHECK),
+    getVersion: () => ipcRenderer.invoke(IPC_CHANNELS.AUTOUPDATE_GET_VERSION),
+  },
 };
 
 contextBridge.exposeInMainWorld("feynmanDesktopApi", api);

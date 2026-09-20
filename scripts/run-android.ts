@@ -27,7 +27,7 @@ const launchResult = spawnSync(
   {
     stdio: "inherit",
     shell: true,
-  }
+  },
 );
 
 if (launchResult.status === 0) {

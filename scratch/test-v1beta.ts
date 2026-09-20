@@ -16,12 +16,12 @@ ws.on("open", () => {
         speechConfig: {
           voiceConfig: {
             prebuiltVoiceConfig: {
-              voiceName: "Puck"
-            }
-          }
-        }
-      }
-    }
+              voiceName: "Puck",
+            },
+          },
+        },
+      },
+    },
   };
   console.log("Sending setup payload:", JSON.stringify(setup));
   ws.send(JSON.stringify(setup));
@@ -37,11 +37,11 @@ ws.on("message", (data) => {
         turns: [
           {
             role: "user",
-            parts: [{ text: "Hola" }]
-          }
+            parts: [{ text: "Hola" }],
+          },
         ],
-        turnComplete: true
-      }
+        turnComplete: true,
+      },
     };
     ws.send(JSON.stringify(textMsg));
   }

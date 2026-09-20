@@ -60,7 +60,19 @@ export const IPC_CHANNELS = {
   // Window
   WINDOW_MINIMIZE: "window:minimize",
   WINDOW_HIDE: "window:hide",
+
+  // Auto-Update
+  AUTOUPDATE_CHECK: "autoupdate:check",
+  AUTOUPDATE_GET_VERSION: "autoupdate:getVersion",
 } as const;
+
+export interface UpdateCheckResult {
+  status: "up_to_date" | "update_available" | "downloading" | "error";
+  currentVersion: string;
+  latestVersion?: string;
+  message: string;
+  releaseUrl?: string;
+}
 
 export interface FeynmanDesktopApi {
   readonly settings: {
@@ -120,5 +132,10 @@ export interface FeynmanDesktopApi {
   readonly window: {
     minimize(): void;
     hide(): void;
+  };
+
+  readonly updater: {
+    check(): Promise<UpdateCheckResult>;
+    getVersion(): Promise<string>;
   };
 }

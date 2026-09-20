@@ -57,7 +57,11 @@ export const FallbackModal: React.FC<FallbackModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={isAuthError ? "⚠️ Error de Autenticación — Gemini Live" : "Modo Portable Autónomo — Fallback para Cualquier IA"}
+      title={
+        isAuthError
+          ? "⚠️ Error de Autenticación — Gemini Live"
+          : "Modo Portable Autónomo — Fallback para Cualquier IA"
+      }
       footer={
         <div
           style={{
@@ -88,10 +92,20 @@ export const FallbackModal: React.FC<FallbackModalProps> = ({
         >
           <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
             <span style={{ fontSize: "20px" }}>🚨</span>
-            <strong style={{ color: "#f87171", fontSize: "15px" }}>Problema con tu API Key de Gemini</strong>
+            <strong style={{ color: "#f87171", fontSize: "15px" }}>
+              Problema con tu API Key de Gemini
+            </strong>
           </div>
-          <p style={{ margin: "0 0 14px 0", fontSize: "13px", lineHeight: "1.5", color: "var(--text-primary)" }}>
-            {noticeMessage || "Tu API Key de Gemini no es válida o fue reportada como filtrada (leaked) y revocada por Google."}
+          <p
+            style={{
+              margin: "0 0 14px 0",
+              fontSize: "13px",
+              lineHeight: "1.5",
+              color: "var(--text-primary)",
+            }}
+          >
+            {noticeMessage ||
+              "Tu API Key de Gemini no es válida o fue reportada como filtrada (leaked) y revocada por Google."}
           </p>
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
             {onOpenSettings && (
@@ -103,10 +117,7 @@ export const FallbackModal: React.FC<FallbackModalProps> = ({
                 ⚙️ Ir a Configuración y Cambiar API Key
               </Button>
             )}
-            <Button
-              variant="secondary"
-              onClick={() => handleCopyAndOpen("google-ai-studio")}
-            >
+            <Button variant="secondary" onClick={() => handleCopyAndOpen("google-ai-studio")}>
               🔑 Obtener Nueva Clave en AI Studio
             </Button>
           </div>

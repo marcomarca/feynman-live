@@ -11,6 +11,7 @@ import type { PortablePromptService } from "../services/PortablePromptService";
 import type { SettingsService } from "../services/SettingsService";
 import type { StudySessionService } from "../services/StudySessionService";
 import { IPC_CHANNELS } from "../shared/ipc-contract";
+import { AutoUpdateService } from "./autoupdate";
 
 export interface IpcHandlerDependencies {
   dataStore: DataStorePort;
@@ -270,5 +271,15 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
     if (win && !win.isDestroyed()) {
       win.hide();
     }
+  });
+
+  // Auto-Update
+  ipcMain.handle(IPC_CHANNELS.AUTOUPDATE_CHECK, async () => {
+    return AutoUpdateService.checkForUpdatesManual();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.AUTOUPDATE_GET_VERSION, async () => {
+    const { app } = await import("electron");
+    return app.getVersion();
   });
 }
