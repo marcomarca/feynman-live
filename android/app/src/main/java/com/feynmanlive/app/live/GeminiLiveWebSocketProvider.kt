@@ -89,15 +89,28 @@ class GeminiLiveWebSocketProvider(
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 if (generation.get() != currentGen) return
                 val respMsg = if (response != null) " (HTTP ${response.code}: ${response.message})" else ""
-                Log.e(TAG, "Fallo en WebSocket Gemini Live$respMsg: ${t.message}", t)
+                val fullMsg = (t.localizedMessage ?: "Error de conexión con Gemini Live") + respMsg
+                Log.e(TAG, "Fallo en WebSocket Gemini Live: $fullMsg", t)
                 connected.set(false)
-                activeSetupDeferred?.completeExceptionally(t)
+
+                val isLeaked = fullMsg.contains("leaked", ignoreCase = true)
+                val isAuth = isLeaked || response?.code == 400 || response?.code == 401 || response?.code == 403 || fullMsg.contains("API_KEY", ignoreCase = true)
+                val errCode = if (isAuth) "AUTH_INVALID" else "NETWORK_ERROR"
+                val userMsg = if (isLeaked) {
+                    "Tu API Key fue reportada como filtrada (leaked) por Google y ha sido revocada. Debes generar una nueva API Key en Google AI Studio y actualizarla en Configuración."
+                } else if (isAuth) {
+                    "API Key de Gemini no válida o revocada ($respMsg). Por favor, cámbiala en Configuración."
+                } else {
+                    fullMsg
+                }
+
+                activeSetupDeferred?.completeExceptionally(IllegalStateException(userMsg))
                 scope.launch {
                     _events.emit(
                         LiveEvent.Error(
-                            code = "NETWORK_ERROR",
-                            message = (t.localizedMessage ?: "Error de conexión con Gemini Live") + respMsg,
-                            retryable = true,
+                            code = errCode,
+                            message = userMsg,
+                            retryable = !isAuth,
                         )
                     )
                 }
@@ -105,6 +118,19 @@ class GeminiLiveWebSocketProvider(
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 Log.w(TAG, "WebSocket cerrándose del servidor: code=$code, reason=$reason")
+                val isLeaked = reason.contains("leaked", ignoreCase = true)
+                val isAuth = isLeaked || code == 1008 || reason.contains("api key", ignoreCase = true)
+                if (isAuth) {
+                    val userMsg = if (isLeaked) {
+                        "Tu API Key fue reportada como filtrada (leaked) por Google y ha sido revocada. Debes generar una nueva API Key en Google AI Studio y actualizarla en Configuración."
+                    } else {
+                        "API Key de Gemini no válida o revocada ($reason). Por favor, cámbiala en Configuración."
+                    }
+                    activeSetupDeferred?.completeExceptionally(IllegalStateException(userMsg))
+                    scope.launch {
+                        _events.emit(LiveEvent.Error("AUTH_INVALID", userMsg, retryable = false))
+                    }
+                }
                 webSocket.close(1000, null)
             }
 
@@ -142,10 +168,20 @@ class GeminiLiveWebSocketProvider(
                 val err = json.getJSONObject("error")
                 val code = err.optString("code", "API_ERROR")
                 val message = err.optString("message", "Error de Gemini API")
+                val isLeaked = message.contains("leaked", ignoreCase = true)
+                val isAuth = isLeaked || code == "401" || code == "403" || message.contains("API_KEY", ignoreCase = true)
+                val errCode = if (isAuth) "AUTH_INVALID" else code
+                val userMsg = if (isLeaked) {
+                    "Tu API Key fue reportada como filtrada (leaked) por Google y ha sido revocada. Debes generar una nueva API Key en Google AI Studio y actualizarla en Configuración."
+                } else if (isAuth) {
+                    "API Key de Gemini no válida o revocada. Por favor, cámbiala en Configuración."
+                } else {
+                    message
+                }
                 Log.e(TAG, "Error retornado por Gemini API: $code - $message")
-                activeSetupDeferred?.completeExceptionally(IllegalStateException("$code: $message"))
+                activeSetupDeferred?.completeExceptionally(IllegalStateException(userMsg))
                 scope.launch {
-                    _events.emit(LiveEvent.Error(code, message, retryable = false))
+                    _events.emit(LiveEvent.Error(errCode, userMsg, retryable = false))
                 }
                 return
             }

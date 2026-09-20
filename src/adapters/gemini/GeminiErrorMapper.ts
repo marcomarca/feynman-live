@@ -10,6 +10,8 @@ export function mapGeminiError(error: unknown): AppError {
 
   // 1. Auth errors
   if (
+    lower.includes("leaked") ||
+    lower.includes("reported as leaked") ||
     lower.includes("api_key_invalid") ||
     lower.includes("invalid api key") ||
     lower.includes("api key not valid") ||
@@ -24,9 +26,12 @@ export function mapGeminiError(error: unknown): AppError {
     lower.includes("401") ||
     lower.includes("403")
   ) {
+    const isLeaked = lower.includes("leaked");
     return createAppError(
       "AUTH_INVALID",
-      "API key de Gemini no válida o sin permisos suficientes.",
+      isLeaked
+        ? "Tu API Key fue reportada como filtrada (leaked) y Google la ha revocado. Genera una nueva API Key en Google AI Studio y cámbiala en Configuración."
+        : "API key de Gemini no válida o sin permisos suficientes.",
       message,
       false,
     );
@@ -75,8 +80,7 @@ export function mapGeminiError(error: unknown): AppError {
     lower.includes("model_unavailable") ||
     lower.includes("unknown model") ||
     lower.includes("invalid_argument") ||
-    lower.includes("1007") ||
-    lower.includes("1008")
+    lower.includes("1007")
   ) {
     return createAppError(
       "MODEL_UNAVAILABLE",

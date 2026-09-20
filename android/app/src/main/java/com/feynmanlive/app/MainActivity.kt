@@ -82,6 +82,9 @@ class MainActivity : ComponentActivity() {
                                 onOpenContext = { id ->
                                     backStack.add(AppRoute.ChatContext(id))
                                 },
+                                onNavigateToSettings = {
+                                    backStack.add(AppRoute.Settings)
+                                },
                             )
                         }
 

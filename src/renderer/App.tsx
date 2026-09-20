@@ -871,6 +871,15 @@ export const App: React.FC = () => {
         onCopyAndOpen={handleCopyAndOpenFallback}
         onExport={handleExportFallback}
         noticeMessage={fallbackNotice}
+        isAuthError={
+          (sessionState.status === "error" && sessionState.error.code === "AUTH_INVALID") ||
+          (fallbackNotice?.toLowerCase().includes("api key") ?? false) ||
+          (fallbackNotice?.toLowerCase().includes("leaked") ?? false)
+        }
+        onOpenSettings={() => {
+          setIsFallbackOpen(false);
+          setIsSettingsOpen(true);
+        }}
       />
 
       {/* Settings Modal */}

@@ -12,6 +12,8 @@ export interface FallbackModalProps {
   onCopyAndOpen: (provider: FallbackProviderId) => Promise<void>;
   onExport: () => Promise<void>;
   noticeMessage?: string;
+  isAuthError?: boolean;
+  onOpenSettings?: () => void;
 }
 
 export const FallbackModal: React.FC<FallbackModalProps> = ({
@@ -22,6 +24,8 @@ export const FallbackModal: React.FC<FallbackModalProps> = ({
   onCopyAndOpen,
   onExport,
   noticeMessage,
+  isAuthError,
+  onOpenSettings,
 }) => {
   const [copiedStatus, setCopiedStatus] = useState<string | null>(null);
 
@@ -53,7 +57,7 @@ export const FallbackModal: React.FC<FallbackModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Modo Portable Autónomo — Fallback para Cualquier IA"
+      title={isAuthError ? "⚠️ Error de Autenticación — Gemini Live" : "Modo Portable Autónomo — Fallback para Cualquier IA"}
       footer={
         <div
           style={{
@@ -72,12 +76,47 @@ export const FallbackModal: React.FC<FallbackModalProps> = ({
         </div>
       }
     >
-      {noticeMessage && (
+      {isAuthError ? (
+        <div
+          style={{
+            padding: "16px",
+            background: "rgba(239, 68, 68, 0.12)",
+            border: "1px solid rgba(239, 68, 68, 0.35)",
+            borderRadius: "8px",
+            marginBottom: "16px",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+            <span style={{ fontSize: "20px" }}>🚨</span>
+            <strong style={{ color: "#f87171", fontSize: "15px" }}>Problema con tu API Key de Gemini</strong>
+          </div>
+          <p style={{ margin: "0 0 14px 0", fontSize: "13px", lineHeight: "1.5", color: "var(--text-primary)" }}>
+            {noticeMessage || "Tu API Key de Gemini no es válida o fue reportada como filtrada (leaked) y revocada por Google."}
+          </p>
+          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+            {onOpenSettings && (
+              <Button
+                variant="primary"
+                onClick={onOpenSettings}
+                style={{ background: "#dc2626", borderColor: "#ef4444" }}
+              >
+                ⚙️ Ir a Configuración y Cambiar API Key
+              </Button>
+            )}
+            <Button
+              variant="secondary"
+              onClick={() => handleCopyAndOpen("google-ai-studio")}
+            >
+              🔑 Obtener Nueva Clave en AI Studio
+            </Button>
+          </div>
+        </div>
+      ) : noticeMessage ? (
         <div className="alert-box alert-warning">
           <strong>Aviso:</strong>
           <span>{noticeMessage}</span>
         </div>
-      )}
+      ) : null}
 
       {copiedStatus && (
         <div className="alert-box alert-success">
