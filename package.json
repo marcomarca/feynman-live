@@ -1,7 +1,7 @@
 {
   "name": "feynman-live",
   "productName": "Feynman Live",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Aplicación de aprendizaje conversacional Feynman con Gemini Live y fallback portable",
   "author": "marcomarca <timburtonmarco@gmail.com>",
   "repository": {
@@ -62,15 +62,13 @@
     },
     "win": {
       "icon": "resources/icons/app.ico",
-      "target": ["nsis", "portable"]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "installerIcon": "resources/icons/app.ico",
-      "uninstallerIcon": "resources/icons/app.ico"
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "Feynman-Live-v${version}-windows-portable.${ext}"
     }
   },
   "trustedDependencies": ["@biomejs/biome", "@google/genai", "protobufjs"]

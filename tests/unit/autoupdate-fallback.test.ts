@@ -24,15 +24,18 @@ describe("AutoUpdateService Fallback Check", () => {
   });
 
   it("should detect portable execution status based on env", () => {
-    const original = process.env.PORTABLE_EXECUTABLE_DIR;
+    const originalDir = process.env.PORTABLE_EXECUTABLE_DIR;
+    const originalFile = process.env.PORTABLE_EXECUTABLE_FILE;
     try {
       process.env.PORTABLE_EXECUTABLE_DIR = "";
+      process.env.PORTABLE_EXECUTABLE_FILE = "";
       expect(AutoUpdateService.isPortable()).toBe(false);
 
       process.env.PORTABLE_EXECUTABLE_DIR = "C:\\Temp\\PortableApp";
       expect(AutoUpdateService.isPortable()).toBe(true);
     } finally {
-      process.env.PORTABLE_EXECUTABLE_DIR = original;
+      process.env.PORTABLE_EXECUTABLE_DIR = originalDir;
+      process.env.PORTABLE_EXECUTABLE_FILE = originalFile;
     }
   });
 });

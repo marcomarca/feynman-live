@@ -287,6 +287,10 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
     return AutoUpdateService.getVersionInfo();
   });
 
+  ipcMain.handle(IPC_CHANNELS.AUTOUPDATE_START_DOWNLOAD, async (_, downloadUrl?: string) => {
+    return AutoUpdateService.downloadPortableUpdate(downloadUrl);
+  });
+
   ipcMain.handle(IPC_CHANNELS.AUTOUPDATE_INSTALL, async () => {
     AutoUpdateService.quitAndInstall();
   });

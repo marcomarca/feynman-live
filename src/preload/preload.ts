@@ -132,6 +132,8 @@ const api: FeynmanDesktopApi = {
     check: () => ipcRenderer.invoke(IPC_CHANNELS.AUTOUPDATE_CHECK),
     getVersion: () => ipcRenderer.invoke(IPC_CHANNELS.AUTOUPDATE_GET_VERSION),
     getVersionInfo: () => ipcRenderer.invoke(IPC_CHANNELS.AUTOUPDATE_GET_VERSION_INFO),
+    downloadUpdate: (url?: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.AUTOUPDATE_START_DOWNLOAD, url),
     install: () => ipcRenderer.invoke(IPC_CHANNELS.AUTOUPDATE_INSTALL),
     openDownload: (url?: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTOUPDATE_OPEN_EXTERNAL, url),
     onStatusChange: (listener: (result: UpdateCheckResult) => void) => {

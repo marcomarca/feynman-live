@@ -108,9 +108,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     await window.feynmanDesktopApi.updater.install();
   };
 
-  const handleDownloadPortable = async (url?: string) => {
+  const handleDownloadUpdate = async (url?: string) => {
     if (!window.feynmanDesktopApi?.updater) return;
-    await window.feynmanDesktopApi.updater.openDownload(url);
+    await window.feynmanDesktopApi.updater.downloadUpdate(url);
   };
 
   const handleSaveKey = async () => {
@@ -412,32 +412,90 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             }`}
             style={{
               display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              flexWrap: "wrap",
-              gap: "8px",
+              flexDirection: "column",
+              gap: "10px",
               width: "100%",
             }}
           >
-            <span style={{ flex: 1, minWidth: "200px" }}>{updateStatus.message}</span>
-            {updateStatus.status === "ready_to_install" && (
-              <Button size="sm" variant="primary" onClick={handleApplyUpdate}>
-                Reiniciar y aplicar
-              </Button>
-            )}
-            {updateStatus.status === "update_available" && updateStatus.isPortable && (
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={() => handleDownloadPortable(updateStatus.downloadUrl)}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: "8px",
+                width: "100%",
+              }}
+            >
+              <span style={{ flex: 1, minWidth: "200px" }}>{updateStatus.message}</span>
+              {updateStatus.status === "ready_to_install" && (
+                <Button size="sm" variant="primary" onClick={handleApplyUpdate}>
+                  Reiniciar y actualizar
+                </Button>
+              )}
+              {updateStatus.status === "update_available" && updateStatus.isPortable && (
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => handleDownloadUpdate(updateStatus.downloadUrl)}
+                >
+                  Descargar actualización {updateStatus.latestVersion || ""}
+                </Button>
+              )}
+              {updateStatus.status === "update_available" && !updateStatus.isPortable && (
+                <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                  Descargando en segundo plano...
+                </span>
+              )}
+            </div>
+
+            {updateStatus.status === "downloading" && updateStatus.downloadProgress && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "6px",
+                  width: "100%",
+                  marginTop: "4px",
+                }}
               >
-                Descargar ejecutable {updateStatus.latestVersion || ""}
-              </Button>
-            )}
-            {updateStatus.status === "update_available" && !updateStatus.isPortable && (
-              <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
-                Descargando en segundo plano...
-              </span>
+                <div
+                  style={{
+                    width: "100%",
+                    height: "6px",
+                    borderRadius: "3px",
+                    background: "rgba(255, 255, 255, 0.1)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      width: `${Math.min(100, Math.max(0, updateStatus.downloadProgress.percent))}%`,
+                      background: "linear-gradient(90deg, var(--accent-primary, #6366f1), #818cf8)",
+                      borderRadius: "3px",
+                      transition: "width 0.2s ease-in-out",
+                    }}
+                  />
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    fontSize: "11px",
+                    color: "var(--text-secondary)",
+                  }}
+                >
+                  <span>Progreso: {updateStatus.downloadProgress.percent}%</span>
+                  {updateStatus.downloadProgress.totalBytes > 0 && (
+                    <span>
+                      {(updateStatus.downloadProgress.transferredBytes / (1024 * 1024)).toFixed(1)}{" "}
+                      MB / {(updateStatus.downloadProgress.totalBytes / (1024 * 1024)).toFixed(1)}{" "}
+                      MB
+                    </span>
+                  )}
+                </div>
+              </div>
             )}
           </div>
         )}
