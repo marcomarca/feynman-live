@@ -360,6 +360,41 @@ describe("StudySessionService (Integration)", () => {
     expect(fakeProvider.lastConnectInput?.conversationHistory?.length).toBe(0);
   });
 
+  it("should not inherit global studyMaterial into a chat with empty studyMaterial", async () => {
+    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
+    await dataStore.saveStudyMaterial("Material Antiguo Global");
+
+    const chat = await chatStore.createChat({
+      tutorPrompt: "Eres mi tutor",
+      studyMaterial: "",
+      voice: "Puck",
+    });
+
+    const res = await sessionService.start(chat.id);
+    expect(res.ok).toBe(true);
+    expect(fakeProvider.lastConnectInput?.studyMaterial).toBe("");
+  });
+
+  it("should respect startWithContext = false in app settings by default", async () => {
+    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
+    await dataStore.saveSettings({ ...DEFAULT_APP_SETTINGS, startWithContext: false });
+
+    const chat = await chatStore.createChat({
+      tutorPrompt: "Eres mi tutor",
+      studyMaterial: "Tema",
+      voice: "Puck",
+    });
+
+    await chatStore.addMessage(chat.id, {
+      role: "user",
+      text: "Mensaje previo",
+    });
+
+    const res = await sessionService.start(chat.id);
+    expect(res.ok).toBe(true);
+    expect(fakeProvider.lastConnectInput?.conversationHistory?.length).toBe(0);
+  });
+
   it("should pass responseModality setting to provider as AUDIO", async () => {
     await secretStore.saveGeminiApiKey("AIzaSyValidKey");
     await dataStore.saveSettings({ ...DEFAULT_APP_SETTINGS, responseModality: "AUDIO" });

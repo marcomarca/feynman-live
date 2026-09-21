@@ -13,6 +13,7 @@ export interface AppSettings {
   readonly globalShortcut: string;
   readonly launchAtLogin: boolean;
   readonly preferredFallbackProvider: FallbackProviderId;
+  readonly startWithContext?: boolean;
   readonly inputDeviceId?: string;
   readonly outputDeviceId?: string;
   readonly defaultPromptVersion: number;
@@ -27,6 +28,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   globalShortcut: "CommandOrControl+Shift+Space",
   launchAtLogin: false,
   preferredFallbackProvider: "google-ai-studio",
+  startWithContext: true,
   defaultPromptVersion: 1,
 };
 

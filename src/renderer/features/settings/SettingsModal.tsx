@@ -50,6 +50,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [preferredFallback, setPreferredFallback] = useState<FallbackProviderId>(
     settings.preferredFallbackProvider,
   );
+  const [startWithContext, setStartWithContext] = useState(settings.startWithContext ?? true);
 
   useEffect(() => {
     setVoice(settings.voice);
@@ -57,6 +58,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setGlobalShortcut(settings.globalShortcut);
     setLaunchAtLogin(settings.launchAtLogin);
     setPreferredFallback(settings.preferredFallbackProvider);
+    setStartWithContext(settings.startWithContext ?? true);
   }, [settings]);
 
   const handleSaveKey = async () => {
@@ -100,6 +102,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       globalShortcut,
       launchAtLogin,
       preferredFallbackProvider: preferredFallback,
+      startWithContext,
     });
     setStatusMsg({ type: "success", text: "Configuración guardada correctamente." });
   };
@@ -258,6 +261,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         >
           Iniciar automáticamente con Windows
         </label>
+      </div>
+
+      <div
+        className="form-group"
+        style={{ flexDirection: "row", alignItems: "flex-start", gap: "10px", marginTop: "10px" }}
+      >
+        <input
+          type="checkbox"
+          id="startWithContext"
+          checked={startWithContext}
+          onChange={(e) => setStartWithContext(e.target.checked)}
+          style={{ marginTop: "3px" }}
+        />
+        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+          <label
+            htmlFor="startWithContext"
+            style={{
+              fontSize: "13px",
+              color: "var(--text-secondary)",
+              cursor: "pointer",
+              fontWeight: 500,
+            }}
+          >
+            Iniciar con contexto previo
+          </label>
+          <span className="form-help" style={{ marginTop: 0 }}>
+            Al continuar una conversación anterior, el tutor recordará todo el historial previo de
+            mensajes. Si está desactivado, cada sesión comenzará desde cero sin historial acumulado.
+          </span>
+        </div>
       </div>
     </Modal>
   );

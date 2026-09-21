@@ -15,6 +15,7 @@ describe("Settings and Defaults", () => {
     expect(DEFAULT_APP_SETTINGS.responseModality).toBe("AUDIO");
     expect(DEFAULT_APP_SETTINGS.globalShortcut).toBe("CommandOrControl+Shift+Space");
     expect(DEFAULT_APP_SETTINGS.launchAtLogin).toBe(false);
+    expect(DEFAULT_APP_SETTINGS.startWithContext).toBe(true);
   });
 
   it("should include standard voices and thinking levels", () => {

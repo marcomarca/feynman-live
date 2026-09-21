@@ -1,7 +1,7 @@
 {
   "name": "feynman-live",
   "productName": "Feynman Live",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Aplicación de aprendizaje conversacional Feynman con Gemini Live y fallback portable",
   "author": "marcomarca <timburtonmarco@gmail.com>",
   "repository": {

@@ -37,7 +37,6 @@ export const App: React.FC = () => {
   // Settings & Secrets
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS);
   const [hasApiKey, setHasApiKey] = useState(false);
-  const [includeHistory, setIncludeHistory] = useState(true);
 
   // Session state
   const [sessionState, setSessionState] = useState<SessionState>(INITIAL_SESSION_STATE);
@@ -75,7 +74,6 @@ export const App: React.FC = () => {
     if (!api) return;
 
     api.content.loadTutorPrompt().then(setTutorPrompt);
-    api.content.loadStudyMaterial().then(setStudyMaterial);
     api.settings.get().then(setSettings);
     api.secrets.hasGeminiKey().then(setHasApiKey);
 
@@ -83,6 +81,9 @@ export const App: React.FC = () => {
       if (list && list.length > 0) {
         const first = await api.chats.get(list[0].id);
         setActiveChat(first);
+        setStudyMaterial(first?.studyMaterial || "");
+      } else {
+        setStudyMaterial("");
       }
     });
 
@@ -144,6 +145,7 @@ export const App: React.FC = () => {
     }
     const chat = await api.chats.get(id);
     setActiveChat(chat);
+    setStudyMaterial(chat?.studyMaterial || "");
   };
 
   const handleNewChat = async () => {
@@ -153,11 +155,12 @@ export const App: React.FC = () => {
     }
     const newChat = await api.chats.create({
       tutorPrompt,
-      studyMaterial,
+      studyMaterial: "",
       voice: settings.voice,
     });
     await refreshChatList();
     setActiveChat(newChat);
+    setStudyMaterial("");
   };
 
   const handleDeleteChat = async (id: string) => {
@@ -171,8 +174,10 @@ export const App: React.FC = () => {
       if (updated && updated.length > 0) {
         const next = await api.chats.get(updated[0].id);
         setActiveChat(next);
+        setStudyMaterial(next?.studyMaterial || "");
       } else {
         setActiveChat(null);
+        setStudyMaterial("");
       }
     }
   };
@@ -225,7 +230,9 @@ export const App: React.FC = () => {
         },
       });
 
-      const res = await api.session.start(targetChatId, { includeHistory });
+      const res = await api.session.start(targetChatId, {
+        includeHistory: settings.startWithContext ?? true,
+      });
       if (!res.ok) {
         micCaptureRef.current.stop();
         playbackQueueRef.current.clear();
@@ -380,7 +387,7 @@ export const App: React.FC = () => {
             style={{ borderRadius: "4px", objectFit: "contain" }}
           />
           <span>Feynman Live</span>
-          <span className="titlebar-badge">v0.1.4 • Studio</span>
+          <span className="titlebar-badge">v0.1.5 • Studio</span>
         </div>
 
         <div className="titlebar-actions">
@@ -495,55 +502,6 @@ export const App: React.FC = () => {
             </div>
 
             <div className="playground-header-right">
-              <button
-                type="button"
-                className={`header-action-btn context-toggle-btn ${includeHistory ? "context-active" : "context-off"}`}
-                onClick={() => setIncludeHistory((prev) => !prev)}
-                title={
-                  includeHistory
-                    ? "Contexto Activo: Al enviar audio o texto, el modelo recordará el material, prompt y todo el historial de esta conversación. Haz clic para empezar desde cero."
-                    : "Empezar desde cero: El modelo ignorará el historial previo de este chat y responderá sin contexto previo. Haz clic para activar el contexto."
-                }
-              >
-                {includeHistory ? (
-                  <>
-                    <span className="context-indicator-dot active" />
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      role="img"
-                      aria-label="Contexto Activo"
-                    >
-                      <path d="M12 8v4l3 3" />
-                      <circle cx="12" cy="12" r="9" />
-                    </svg>
-                    <span>Contexto: Activo</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="context-indicator-dot off" />
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      role="img"
-                      aria-label="Contexto Desde Cero"
-                    >
-                      <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
-                      <line x1="12" y1="2" x2="12" y2="12" />
-                    </svg>
-                    <span>Contexto: Desde Cero</span>
-                  </>
-                )}
-              </button>
-
               <button
                 type="button"
                 className={`header-action-btn modality-toggle-btn ${isTutorVoiceMuted ? "modality-text" : "modality-audio"}`}
@@ -833,13 +791,27 @@ export const App: React.FC = () => {
 
               <MaterialEditor
                 value={studyMaterial}
-                onChange={(val) => {
+                onChange={async (val) => {
                   setStudyMaterial(val);
-                  api?.content.saveStudyMaterial(val);
+                  if (activeChat) {
+                    await api?.chats.update(activeChat.id, { studyMaterial: val });
+                    const reloaded = await api?.chats.get(activeChat.id);
+                    if (reloaded) {
+                      setActiveChat(reloaded);
+                      await refreshChatList();
+                    }
+                  }
                 }}
-                onClear={() => {
+                onClear={async () => {
                   setStudyMaterial("");
-                  api?.content.saveStudyMaterial("");
+                  if (activeChat) {
+                    await api?.chats.update(activeChat.id, { studyMaterial: "" });
+                    const reloaded = await api?.chats.get(activeChat.id);
+                    if (reloaded) {
+                      setActiveChat(reloaded);
+                      await refreshChatList();
+                    }
+                  }
                 }}
               />
             </div>

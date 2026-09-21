@@ -592,8 +592,12 @@ export class StudySessionService {
     this.setState({ status: "connecting" });
 
     let tutorPrompt = await this.dataStore.loadTutorPrompt();
-    let studyMaterial = await this.dataStore.loadStudyMaterial();
+    let studyMaterial = "";
     const settings = await this.dataStore.loadSettings();
+    const shouldIncludeHistory =
+      options?.includeHistory !== undefined
+        ? options.includeHistory
+        : (settings.startWithContext ?? true);
     let conversationHistory: Array<{ role: "user" | "model"; text: string }> = [];
 
     // Prepare or load Chat
@@ -602,10 +606,10 @@ export class StudySessionService {
       const existingChat = await this.chatStore.getChat(chatId);
       if (existingChat) {
         if (existingChat.tutorPrompt) tutorPrompt = existingChat.tutorPrompt;
-        if (existingChat.studyMaterial) studyMaterial = existingChat.studyMaterial;
+        studyMaterial = existingChat.studyMaterial || "";
 
-        // By default, include all previous messages for seamless continuity
-        if (options?.includeHistory !== false && existingChat.messages.length > 0) {
+        // Include previous messages if requested by options or startWithContext setting
+        if (shouldIncludeHistory && existingChat.messages.length > 0) {
           conversationHistory = existingChat.messages
             .filter((m) => Boolean(m.text?.trim()))
             .map((m) => ({
@@ -617,10 +621,11 @@ export class StudySessionService {
     } else if (this.chatStore) {
       const newChat = await this.chatStore.createChat({
         tutorPrompt,
-        studyMaterial,
+        studyMaterial: "",
         voice: settings.voice,
       });
       this.currentChatId = newChat.id;
+      studyMaterial = "";
     }
 
     this.activeConnectConfig = {
