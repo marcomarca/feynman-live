@@ -372,20 +372,15 @@ export const App: React.FC = () => {
       {/* Titlebar */}
       <header className="titlebar">
         <div className="titlebar-brand">
-          <svg
+          <img
+            src="./brand-icon.png"
+            alt="Feynman Logo"
             width="18"
             height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.2"
-            role="img"
-            aria-label="Feynman Logo"
-          >
-            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-          </svg>
+            style={{ borderRadius: "4px", objectFit: "contain" }}
+          />
           <span>Feynman Live</span>
-          <span className="titlebar-badge">v0.2.0 • Studio</span>
+          <span className="titlebar-badge">v0.1.4 • Studio</span>
         </div>
 
         <div className="titlebar-actions">

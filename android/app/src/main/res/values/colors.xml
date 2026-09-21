@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand_chalkboard">#0F3B2E</color>
+    <color name="brand_paper">#F4ECD7</color>
+    <color name="brand_mustard">#F2C94C</color>
+    <color name="brand_ink">#0B0D0C</color>
+    <color name="brand_chalkboard_deep">#0E2C21</color>
+</resources>

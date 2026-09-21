@@ -1,0 +1,39 @@
+{
+  "brand": "Feynman Live",
+  "version": "option-2-focused-pack",
+  "palette": {
+    "Chalkboard": "#0F3B2E",
+    "Paper": "#F4ECD7",
+    "Ink": "#0B0D0C",
+    "Mustard": "#F2C94C",
+    "Skin": "#FCCF9A",
+    "Hair": "#7B4830",
+    "Hair Shadow": "#523425",
+    "Chalkboard Deep": "#0E2C21"
+  },
+  "typography": {
+    "primary": "Space Grotesk, Inter, ui-sans-serif, system-ui, sans-serif",
+    "secondary": "Inter, ui-sans-serif, system-ui, sans-serif",
+    "mono_optional": "IBM Plex Mono, ui-monospace, SFMono-Regular, Menlo, monospace",
+    "recommended_weights": [400, 500, 600, 700]
+  },
+  "icon_usage": {
+    "16_to_48": "Use the micro icon variant for favicon and Windows tray contexts.",
+    "64_and_up": "Use the full icon variant for app icons, launchers, docs, and marketing.",
+    "shape": "Rounded square with transparency outside the icon boundary."
+  },
+  "states": {
+    "listening": {
+      "pattern": "Vertical bar waveform",
+      "background": "#0F3B2E",
+      "foreground": ["#F4ECD7", "#F2C94C"],
+      "animation": "Soft pulse and height variation, 900–1200ms loops."
+    },
+    "thinking": {
+      "pattern": "Three dots",
+      "background": "#0F3B2E",
+      "foreground": ["#F4ECD7", "#F4ECD7", "#F2C94C"],
+      "animation": "Sequential pulse or opacity shift, 900–1200ms loops."
+    }
+  }
+}

@@ -43,19 +43,13 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
     <aside className="chat-sidebar">
       <div className="sidebar-header">
         <div className="sidebar-brand">
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="var(--accent-primary)"
-            strokeWidth="2.5"
-            role="img"
-            aria-label="Logo"
-          >
-            <circle cx="12" cy="12" r="10" />
-            <path d="M12 6v6l4 2" />
-          </svg>
+          <img
+            src="./brand-icon.png"
+            alt="Feynman Live Logo"
+            width="22"
+            height="22"
+            style={{ borderRadius: "5px", objectFit: "contain" }}
+          />
           <span className="brand-title">Feynman Live</span>
         </div>
 

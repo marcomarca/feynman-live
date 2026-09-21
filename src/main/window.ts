@@ -64,6 +64,23 @@ export class ElectronWindowManager implements WindowManager {
     return null;
   }
 
+  private resolveAppIconPath(): string | undefined {
+    const candidates = [
+      join(app.getAppPath(), "resources", "icons", "app.ico"),
+      join(process.cwd(), "resources", "icons", "app.ico"),
+      join(__dirname, "..", "resources", "icons", "app.ico"),
+      join(app.getAppPath(), "resources", "icons", "icon-256.png"),
+      join(process.cwd(), "resources", "icons", "icon-256.png"),
+    ];
+
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    }
+    return undefined;
+  }
+
   createMainWindow(): BrowserWindow {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.showAndFocus();
@@ -71,6 +88,7 @@ export class ElectronWindowManager implements WindowManager {
     }
 
     const preloadPath = this.resolvePreloadPath();
+    const appIcon = this.resolveAppIconPath();
 
     this.mainWindow = new BrowserWindow({
       width: 1100,
@@ -78,6 +96,7 @@ export class ElectronWindowManager implements WindowManager {
       minWidth: 850,
       minHeight: 650,
       title: "Feynman Live",
+      icon: appIcon,
       backgroundColor: "#0d1117",
       show: false,
       autoHideMenuBar: true,
