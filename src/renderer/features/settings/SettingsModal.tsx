@@ -185,23 +185,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       <div className="form-group">
         <span className="form-label">Google Gemini Live API Key:</span>
         {hasApiKey && !isEditingKey ? (
-          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
             <input
               type="text"
               className="form-input"
               value="••••••••••••••••••••••••••••••••"
               disabled
-              style={{ flex: 1, letterSpacing: "2px" }}
+              style={{ flex: "1 1 200px", letterSpacing: "2px" }}
             />
-            <Button size="sm" variant="secondary" onClick={() => setIsEditingKey(true)}>
-              Cambiar
-            </Button>
-            <Button size="sm" variant="secondary" onClick={handleTestKey}>
-              Probar
-            </Button>
-            <Button size="sm" variant="danger" onClick={handleDeleteKey}>
-              Eliminar
-            </Button>
+            <div style={{ display: "flex", gap: "6px" }}>
+              <Button size="sm" variant="secondary" onClick={() => setIsEditingKey(true)}>
+                Cambiar
+              </Button>
+              <Button size="sm" variant="secondary" onClick={handleTestKey}>
+                Probar
+              </Button>
+              <Button size="sm" variant="danger" onClick={handleDeleteKey}>
+                Eliminar
+              </Button>
+            </div>
           </div>
         ) : (
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
@@ -297,53 +299,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </span>
       </div>
 
-      <div
-        className="form-group"
-        style={{ flexDirection: "row", alignItems: "center", gap: "10px" }}
-      >
+      <label className="setting-toggle-row" htmlFor="launchAtLogin">
         <input
           type="checkbox"
           id="launchAtLogin"
           checked={launchAtLogin}
           onChange={(e) => setLaunchAtLogin(e.target.checked)}
         />
-        <label
-          htmlFor="launchAtLogin"
-          style={{ fontSize: "13px", color: "var(--text-secondary)", cursor: "pointer" }}
-        >
-          Iniciar automáticamente con Windows
-        </label>
-      </div>
+        <div className="setting-toggle-info">
+          <span className="setting-toggle-title">Iniciar automáticamente con Windows</span>
+          <span className="setting-toggle-desc">
+            Abre Feynman Live minimizado en la bandeja del sistema al arrancar el equipo.
+          </span>
+        </div>
+      </label>
 
-      <div
-        className="form-group"
-        style={{ flexDirection: "row", alignItems: "flex-start", gap: "10px", marginTop: "10px" }}
-      >
+      <label className="setting-toggle-row" htmlFor="startWithContext">
         <input
           type="checkbox"
           id="startWithContext"
           checked={startWithContext}
           onChange={(e) => setStartWithContext(e.target.checked)}
-          style={{ marginTop: "3px" }}
         />
-        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-          <label
-            htmlFor="startWithContext"
-            style={{
-              fontSize: "13px",
-              color: "var(--text-secondary)",
-              cursor: "pointer",
-              fontWeight: 500,
-            }}
-          >
-            Iniciar con contexto previo
-          </label>
-          <span className="form-help" style={{ marginTop: 0 }}>
+        <div className="setting-toggle-info">
+          <span className="setting-toggle-title">Iniciar con contexto previo</span>
+          <span className="setting-toggle-desc">
             Al continuar una conversación anterior, el tutor recordará todo el historial previo de
             mensajes. Si está desactivado, cada sesión comenzará desde cero sin historial acumulado.
           </span>
         </div>
-      </div>
+      </label>
 
       {/* App Updates Section */}
       <div

@@ -1,6 +1,7 @@
 import type React from "react";
 import { useState } from "react";
 import type { ChatSessionMeta } from "../../domain/chat";
+import { Button } from "./Button";
 
 interface ChatSidebarProps {
   chats: ChatSessionMeta[];
@@ -93,18 +94,19 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
             });
 
             return (
-              <button
-                type="button"
-                key={chat.id}
-                className={`chat-item-row ${isActive ? "active-chat" : ""}`}
-                onClick={() => onSelectChat(chat.id)}
-              >
-                <div className="chat-item-info">
-                  <span className="chat-item-title">{chat.title || "Sesión de Estudio"}</span>
-                  <span className="chat-item-meta">
-                    {dateStr} • {chat.messageCount} msgs
-                  </span>
-                </div>
+              <div key={chat.id} className={`chat-item-row ${isActive ? "active-chat" : ""}`}>
+                <button
+                  type="button"
+                  className="chat-item-select-btn"
+                  onClick={() => onSelectChat(chat.id)}
+                >
+                  <div className="chat-item-info">
+                    <span className="chat-item-title">{chat.title || "Sesión de Estudio"}</span>
+                    <span className="chat-item-meta">
+                      {dateStr} • {chat.messageCount} msgs
+                    </span>
+                  </div>
+                </button>
 
                 <button
                   type="button"
@@ -127,7 +129,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                   </svg>
                 </button>
-              </button>
+              </div>
             );
           })
         )}
@@ -143,12 +145,12 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
               asociados a esta sesión en AppData.
             </p>
             <div className="confirm-delete-actions">
-              <button type="button" className="btn-secondary" onClick={cancelDelete}>
+              <Button variant="secondary" onClick={cancelDelete}>
                 Cancelar
-              </button>
-              <button type="button" className="btn-danger" onClick={confirmDelete}>
+              </Button>
+              <Button variant="danger" onClick={confirmDelete}>
                 Eliminar definitivamente
-              </button>
+              </Button>
             </div>
           </div>
         </div>

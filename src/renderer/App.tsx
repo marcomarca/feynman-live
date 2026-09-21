@@ -7,6 +7,7 @@ import type { SessionState } from "../domain/session-state";
 import { INITIAL_SESSION_STATE } from "../domain/session-state";
 import { MicrophoneCapture } from "./audio/microphone";
 import { AudioPlaybackQueue } from "./audio/playback";
+import { Button } from "./components/Button";
 import { ChatMessageItem } from "./components/ChatMessageItem";
 import { ChatSidebar } from "./components/ChatSidebar";
 import { FallbackModal } from "./features/fallback/FallbackModal";
@@ -387,7 +388,7 @@ export const App: React.FC = () => {
             style={{ borderRadius: "4px", objectFit: "contain" }}
           />
           <span>Feynman Live</span>
-          <span className="titlebar-badge">v0.1.6 • Studio</span>
+          <span className="titlebar-badge">v0.1.7 • Studio</span>
         </div>
 
         <div className="titlebar-actions">
@@ -434,7 +435,7 @@ export const App: React.FC = () => {
 
           <button
             type="button"
-            className="btn-icon"
+            className="btn-icon btn-icon-close"
             onClick={() => api?.window.hide()}
             title="Ocultar a la bandeja"
           >
@@ -618,9 +619,35 @@ export const App: React.FC = () => {
                 .filter((msg) => Boolean(msg.text?.trim()) || Boolean(msg.audioBase64))
                 .map((msg) => <ChatMessageItem key={msg.id} message={msg} />)
             ) : (
-              <div className="empty-chats-notice" style={{ marginTop: "40px" }}>
-                <p>Comienza tu sesión de estudio</p>
-                <span>Habla por el micrófono o escribe abajo para interactuar con tu tutor.</span>
+              <div className="studio-empty-hero">
+                <div className="studio-empty-icon">
+                  <svg
+                    width="28"
+                    height="28"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    role="img"
+                    aria-label="Técnica Feynman"
+                  >
+                    <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z" />
+                    <path d="M12 16v-4" />
+                    <path d="M12 8h.01" />
+                  </svg>
+                </div>
+                <h3 className="studio-empty-title">Comienza tu sesión con la Técnica Feynman</h3>
+                <p className="studio-empty-desc">
+                  Aprende enseñando: explica un concepto con tus propias palabras o haz preguntas.
+                  El tutor socrático te guiará señalando brechas conceptuales.
+                </p>
+                <div className="studio-empty-pills">
+                  <span className="studio-empty-pill">🎙️ Habla por voz en tiempo real</span>
+                  <span className="studio-empty-pill">💬 O escribe un mensaje abajo</span>
+                  <span className="studio-empty-pill">📖 Vincula material de estudio</span>
+                </div>
               </div>
             )}
 
@@ -771,7 +798,17 @@ export const App: React.FC = () => {
                 onClick={() => setShowMaterialDrawer(false)}
                 aria-label="Cerrar modal"
               >
-                ✕
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
               </button>
             </div>
 
@@ -817,13 +854,9 @@ export const App: React.FC = () => {
             </div>
 
             <div className="modal-footer">
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={() => setShowMaterialDrawer(false)}
-              >
+              <Button variant="primary" onClick={() => setShowMaterialDrawer(false)}>
                 Listo
-              </button>
+              </Button>
             </div>
           </div>
         </div>

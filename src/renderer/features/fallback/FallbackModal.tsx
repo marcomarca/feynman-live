@@ -141,7 +141,7 @@ export const FallbackModal: React.FC<FallbackModalProps> = ({
           <Button variant="primary" onClick={() => handleCopyAndOpen("google-ai-studio")}>
             Copiar + Abrir AI Studio
           </Button>
-          <Button variant="primary" onClick={() => handleCopyAndOpen("chatgpt")}>
+          <Button variant="secondary" onClick={() => handleCopyAndOpen("chatgpt")}>
             Copiar + Abrir ChatGPT
           </Button>
           <Button variant="secondary" onClick={handleCopy}>
@@ -155,18 +155,7 @@ export const FallbackModal: React.FC<FallbackModalProps> = ({
 
       <div className="form-group" style={{ marginTop: "10px" }}>
         <span className="form-label">Vista Previa del Paquete de Estudio:</span>
-        <textarea
-          className="form-input"
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "12px",
-            height: "180px",
-            resize: "vertical",
-            whiteSpace: "pre-wrap",
-          }}
-          value={compiledPrompt}
-          readOnly
-        />
+        <textarea className="fallback-preview-textarea" value={compiledPrompt} readOnly />
       </div>
     </Modal>
   );
