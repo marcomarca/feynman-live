@@ -3,6 +3,7 @@ import { float32ToPcm16, resample } from "./pcm";
 export interface LocalVadOptions {
   minSpeechDurationMs?: number;
   silenceHangoverMs?: number;
+  maxContinuousSpeechMs?: number;
   onSpeechStart?: () => void;
   onSpeechEnd?: () => void;
 }
@@ -12,6 +13,7 @@ export class LocalVoiceActivityDetector {
   private isSpeechActive = false;
   private speechFramesDurationMs = 0;
   private silenceFramesDurationMs = 0;
+  private continuousSpeechDurationMs = 0;
 
   constructor(private readonly options: LocalVadOptions) {}
 
@@ -30,6 +32,7 @@ export class LocalVoiceActivityDetector {
 
     const minSpeechMs = this.options.minSpeechDurationMs ?? 150;
     const hangoverMs = this.options.silenceHangoverMs ?? 650;
+    const maxSpeechMs = this.options.maxContinuousSpeechMs ?? 25000;
 
     const speechThreshold = Math.max(0.02, this.noiseFloor * 2.5);
     const silenceThreshold = Math.max(0.012, this.noiseFloor * 1.5);
@@ -46,7 +49,22 @@ export class LocalVoiceActivityDetector {
 
       if (!this.isSpeechActive && this.speechFramesDurationMs >= minSpeechMs) {
         this.isSpeechActive = true;
+        this.continuousSpeechDurationMs = 0;
         this.options.onSpeechStart?.();
+      }
+
+      if (this.isSpeechActive) {
+        this.continuousSpeechDurationMs += durationMs;
+        // Natural turn boundary guard: force onSpeechEnd if talking continuously for maxSpeechMs
+        // This avoids Google Cloud backend aborting the WebSocket after prolonged unclosed stream.
+        if (this.continuousSpeechDurationMs >= maxSpeechMs) {
+          this.isSpeechActive = false;
+          this.speechFramesDurationMs = 0;
+          this.silenceFramesDurationMs = 0;
+          this.continuousSpeechDurationMs = 0;
+          this.options.onSpeechEnd?.();
+          return { isVoice: false, rms, peak };
+        }
       }
     } else {
       this.speechFramesDurationMs = 0;
@@ -56,6 +74,7 @@ export class LocalVoiceActivityDetector {
         if (this.silenceFramesDurationMs >= hangoverMs) {
           this.isSpeechActive = false;
           this.silenceFramesDurationMs = 0;
+          this.continuousSpeechDurationMs = 0;
           this.options.onSpeechEnd?.();
         }
       }
@@ -69,6 +88,7 @@ export class LocalVoiceActivityDetector {
       this.isSpeechActive = false;
       this.speechFramesDurationMs = 0;
       this.silenceFramesDurationMs = 0;
+      this.continuousSpeechDurationMs = 0;
       this.options.onSpeechEnd?.();
     }
   }
@@ -77,6 +97,7 @@ export class LocalVoiceActivityDetector {
     this.isSpeechActive = false;
     this.speechFramesDurationMs = 0;
     this.silenceFramesDurationMs = 0;
+    this.continuousSpeechDurationMs = 0;
   }
 
   get speechActive(): boolean {
@@ -141,6 +162,7 @@ export class MicrophoneCapture {
       this.vad = new LocalVoiceActivityDetector({
         minSpeechDurationMs: 150,
         silenceHangoverMs: 650,
+        maxContinuousSpeechMs: 25000,
         onSpeechStart: options.onSpeechStart,
         onSpeechEnd: options.onSpeechEnd,
       });

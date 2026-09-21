@@ -158,4 +158,31 @@ describe("LocalVoiceActivityDetector (Unit)", () => {
     vad.forceEnd();
     expect(speechEndCount).toBe(1);
   });
+
+  it("should trigger speech end automatically when continuous speech reaches maxContinuousSpeechMs", () => {
+    let speechStartCount = 0;
+    let speechEndCount = 0;
+
+    const vad = new LocalVoiceActivityDetector({
+      minSpeechDurationMs: 100,
+      silenceHangoverMs: 600,
+      maxContinuousSpeechMs: 1000, // 1 second max continuous speech for fast test
+      onSpeechStart: () => {
+        speechStartCount += 1;
+      },
+      onSpeechEnd: () => {
+        speechEndCount += 1;
+      },
+    });
+
+    const voice = generateTone(320, 0.3);
+
+    // Feed 60 frames of 20ms = 1200ms continuous voice (exceeding minSpeech + maxContinuousSpeech)
+    for (let i = 0; i < 60; i++) {
+      vad.processFrame(voice, 20);
+    }
+
+    expect(speechStartCount).toBeGreaterThanOrEqual(1);
+    expect(speechEndCount).toBeGreaterThanOrEqual(1);
+  });
 });

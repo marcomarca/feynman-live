@@ -111,7 +111,16 @@ export function mapGeminiError(error: unknown): AppError {
   if (
     lower.includes("connection closed") ||
     lower.includes("1006") ||
+    lower.includes("1008") ||
+    lower.includes("1001") ||
+    lower.includes("1011") ||
+    lower.includes("1012") ||
+    lower.includes("1013") ||
     lower.includes("websocket closed") ||
+    lower.includes("cierre del servidor") ||
+    lower.includes("the operation was aborted") ||
+    lower.includes("aborted") ||
+    lower.includes("stream reset") ||
     lower.includes("econnreset")
   ) {
     return createAppError(

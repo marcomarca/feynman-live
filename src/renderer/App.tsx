@@ -93,8 +93,11 @@ export const App: React.FC = () => {
       if (state.status === "error") {
         micCaptureRef.current.stop();
         playbackQueueRef.current.clear();
-        setFallbackNotice(`Sesión no disponible: ${state.error.message}`);
-        setIsFallbackOpen(true);
+        setFallbackNotice(`Sesión interrumpida: ${state.error.message}`);
+        // Only open settings modal automatically if API key is completely missing
+        if (state.error.code === "AUTH_MISSING") {
+          setIsSettingsOpen(true);
+        }
       }
     });
 
@@ -112,8 +115,13 @@ export const App: React.FC = () => {
       setStreamingText("");
       setActiveChat((prev) => {
         if (!prev) return prev;
-        // Avoid duplicate message IDs
-        if (prev.messages.some((m) => m.id === message.id)) return prev;
+        const existingIdx = prev.messages.findIndex((m) => m.id === message.id);
+        if (existingIdx >= 0) {
+          // Update in-place (e.g. background rescue transcription updated text)
+          const updated = [...prev.messages];
+          updated[existingIdx] = message;
+          return { ...prev, messages: updated };
+        }
         return {
           ...prev,
           messages: [...prev.messages, message],
@@ -238,14 +246,15 @@ export const App: React.FC = () => {
         micCaptureRef.current.stop();
         playbackQueueRef.current.clear();
         setFallbackNotice(`No se pudo iniciar Gemini Live: ${res.error.message}`);
-        setIsFallbackOpen(true);
+        if (res.error.code === "AUTH_MISSING" || res.error.code === "AUTH_INVALID") {
+          setIsSettingsOpen(true);
+        }
       }
     } catch (e) {
       micCaptureRef.current.stop();
       setFallbackNotice(
         `Error al acceder al micrófono: ${e instanceof Error ? e.message : String(e)}`,
       );
-      setIsFallbackOpen(true);
     }
   };
 
@@ -388,7 +397,7 @@ export const App: React.FC = () => {
             style={{ borderRadius: "4px", objectFit: "contain" }}
           />
           <span>Feynman Live</span>
-          <span className="titlebar-badge">v0.1.7 • Studio</span>
+          <span className="titlebar-badge">v0.1.8 • Studio</span>
         </div>
 
         <div className="titlebar-actions">
@@ -605,6 +614,33 @@ export const App: React.FC = () => {
 
           {/* Conversation Feed */}
           <div className="conversation-feed">
+            {sessionState.status === "error" && (
+              <div className="session-error-banner">
+                <div className="session-error-content">
+                  <span className="error-icon">⚠️</span>
+                  <div className="session-error-text">
+                    <strong>Conexión con Gemini interrumpida:</strong>{" "}
+                    <span>{sessionState.error.message}</span>
+                    <span className="saved-notice">
+                      (Tus audios y mensajes fueron guardados en el historial).
+                    </span>
+                  </div>
+                </div>
+                <div className="session-error-actions">
+                  <Button variant="primary" size="sm" onClick={handleStartSession}>
+                    Reconectar
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => handleOpenFallbackModal(sessionState.error.message)}
+                  >
+                    Modo Fallback
+                  </Button>
+                </div>
+              </div>
+            )}
+
             {activeChat?.studyMaterial && (
               <div className="material-banner">
                 <div className="material-banner-header">

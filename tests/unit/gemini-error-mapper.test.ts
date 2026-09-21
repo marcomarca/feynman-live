@@ -42,6 +42,18 @@ describe("GeminiErrorMapper", () => {
     const err = GeminiErrorMapper.map(new Error("WebSocket connection closed with code 1006."));
     expect(err.code).toBe("CONNECTION_CLOSED");
     expect(err.retryable).toBe(true);
+
+    const err1008 = GeminiErrorMapper.map(
+      new Error('Cierre del servidor (1008): "The operation was aborted."'),
+    );
+    expect(err1008.code).toBe("CONNECTION_CLOSED");
+    expect(err1008.retryable).toBe(true);
+
+    const errAbort = GeminiErrorMapper.map(
+      new Error("Stream terminated unexpectedly: the operation was aborted"),
+    );
+    expect(errAbort.code).toBe("CONNECTION_CLOSED");
+    expect(errAbort.retryable).toBe(true);
   });
 
   it("should fallback unknown errors safely", () => {

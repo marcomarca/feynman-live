@@ -28,6 +28,11 @@ export interface ChatStorePort {
     message: Omit<ChatMessage, "id" | "timestamp">,
     pcmAudio?: { bytes: Uint8Array; sampleRate: number },
   ): Promise<Result<ChatMessage, AppError>>;
+  updateMessageText(
+    chatId: string,
+    messageId: string,
+    text: string,
+  ): Promise<Result<ChatMessage, AppError>>;
   getAudioAsBase64(chatId: string, audioFileName: string): Promise<string | null>;
   exportChatAsMarkdown(chatId: string): Promise<string>;
 }
@@ -292,6 +297,49 @@ export class ChatHistoryStore implements ChatStorePort {
         createAppError(
           "UNKNOWN",
           "Error al guardar mensaje en el chat",
+          e instanceof Error ? e.message : String(e),
+        ),
+      );
+    }
+  }
+
+  async updateMessageText(
+    chatId: string,
+    messageId: string,
+    text: string,
+  ): Promise<Result<ChatMessage, AppError>> {
+    const chat = await this.getChat(chatId);
+    if (!chat) {
+      return err(createAppError("UNKNOWN", `Chat no encontrado: ${chatId}`));
+    }
+
+    const msg = chat.messages.find((m) => m.id === messageId);
+    if (!msg) {
+      return err(createAppError("UNKNOWN", `Mensaje no encontrado: ${messageId}`));
+    }
+
+    msg.text = text;
+    chat.updatedAt = Date.now();
+
+    if (chat.title === "Nueva Sesión de Estudio" && msg.role === "user" && text) {
+      chat.title = text.slice(0, 35).trim();
+    }
+
+    try {
+      const toSave: ChatSession = {
+        ...chat,
+        messages: chat.messages.map((m) => {
+          const { audioBase64: _omitted, ...rest } = m;
+          return rest;
+        }),
+      };
+      await this.writeAtomic(this.getMetaPath(chatId), JSON.stringify(toSave, null, 2));
+      return ok(msg);
+    } catch (e) {
+      return err(
+        createAppError(
+          "UNKNOWN",
+          "Error al actualizar texto del mensaje",
           e instanceof Error ? e.message : String(e),
         ),
       );

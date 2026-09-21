@@ -580,4 +580,75 @@ describe("StudySessionService (Integration)", () => {
     await sessionService.stop();
     expect(sessionService.getCurrentTurn()).toBeNull();
   });
+
+  it("should preserve recorded user audio when server closes abruptly without live transcription", async () => {
+    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
+    await sessionService.start();
+
+    const completedMessages: ChatMessage[] = [];
+    sessionService.onMessageComplete((msg) => completedMessages.push(msg));
+
+    // User speaks 10KB of audio (~320ms at 16kHz)
+    sessionService.handleSpeechStart();
+    sessionService.sendAudio(new Uint8Array(10000));
+    sessionService.handleAudioStreamEnd();
+
+    // Server abruptly closes before emitting user transcription
+    fakeProvider.emitError(
+      createAppError(
+        "CONNECTION_CLOSED",
+        "Cierre del servidor (1008): The operation was aborted.",
+        undefined,
+        true,
+      ),
+    );
+
+    // Message must be preserved in chat store and emitted
+    expect(completedMessages.length).toBe(1);
+    expect(completedMessages[0].role).toBe("user");
+    expect(completedMessages[0].audioBase64).toBeDefined();
+    expect(completedMessages[0].text).toContain("Mensaje de voz grabado");
+
+    const activeChatId = sessionService.getCurrentChatId();
+    expect(activeChatId).toBeDefined();
+
+    // Allow asynchronous atomic disk write in chatStore to settle
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const chat = activeChatId ? await chatStore.getChat(activeChatId) : null;
+    expect(chat?.messages.length).toBe(1);
+    expect(chat?.messages[0].audioFileName).toBeDefined();
+
+    await sessionService.stop();
+  });
+
+  it("should buffer microphone audio during reconnecting state and flush to provider once reconnected", async () => {
+    await secretStore.saveGeminiApiKey("AIzaSyValidKey");
+    await sessionService.start();
+
+    // Force reconnecting state by emitting a retryable error
+    fakeProvider.emitError(
+      createAppError("CONNECTION_CLOSED", "Conexión cerrada inesperadamente", undefined, true),
+    );
+    expect(sessionService.getState().status).toBe("reconnecting");
+
+    // Clear recorded chunks from provider to isolate reconnect buffer
+    fakeProvider.sentAudioChunks = [];
+
+    // User continues speaking while app is reconnecting
+    const userSpokenChunk = new Uint8Array(4000);
+    sessionService.sendAudio(userSpokenChunk);
+
+    // Audio should be buffered internally, not sent yet to dead provider
+    expect(fakeProvider.sentAudioChunks.length).toBe(0);
+
+    // Wait for backoff timeout (500ms for attempt 1)
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    // Reconnection should have reconnected and flushed buffered chunks
+    expect(sessionService.getState().status).toBe("listening");
+    expect(fakeProvider.sentAudioChunks.length).toBeGreaterThanOrEqual(1);
+
+    await sessionService.stop();
+  });
 });

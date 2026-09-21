@@ -53,7 +53,16 @@ if (!gotTheLock) {
     // Initialize services
     const promptService = new PortablePromptService(dataStore, defaultCompiler, clipboardAdapter);
     const settingsService = new SettingsService(dataStore, secretStore);
-    const sessionService = new StudySessionService(dataStore, secretStore, liveAdapter, chatStore);
+    const sessionService = new StudySessionService(
+      dataStore,
+      secretStore,
+      liveAdapter,
+      chatStore,
+      undefined,
+      undefined,
+      undefined,
+      logger,
+    );
 
     // Load initial settings
     const settings = await settingsService.getSettings();

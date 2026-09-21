@@ -9,6 +9,10 @@ import { type AppError, createAppError } from "../domain/app-error";
 import type { ChatMessage } from "../domain/chat";
 import { type Result, err, isErr, ok } from "../domain/result";
 import type { SessionState } from "../domain/session-state";
+import type { LoggerPort } from "../shared/logger";
+import { defaultLogger } from "../shared/logger";
+import type { AudioTranscriptionRescuePort } from "./AudioTranscriptionRescueService";
+import { AudioTranscriptionRescueService } from "./AudioTranscriptionRescueService";
 
 function mergeUint8Arrays(chunks: Uint8Array[]): Uint8Array {
   const totalLen = chunks.reduce((acc, c) => acc + c.byteLength, 0);
@@ -73,6 +77,9 @@ export class StudySessionService {
   private isMuted = false;
   private isAwaitingTextResponse = false;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAudioChunks: Uint8Array[] = [];
+  private readonly rescueTranscriber: AudioTranscriptionRescuePort;
+  private readonly logger: LoggerPort;
 
   constructor(
     private readonly dataStore: DataStorePort,
@@ -81,7 +88,11 @@ export class StudySessionService {
     private readonly chatStore?: ChatStorePort,
     private readonly recoveryPolicy: SessionRecoveryPolicy = new DefaultSessionRecoveryPolicy(),
     watchdogTimeouts?: WatchdogTimeouts,
+    rescueTranscriber?: AudioTranscriptionRescuePort,
+    logger: LoggerPort = defaultLogger,
   ) {
+    this.logger = logger;
+    this.rescueTranscriber = rescueTranscriber ?? new AudioTranscriptionRescueService(this.logger);
     this.watchdogTimeouts = {
       ackTimeoutMs: watchdogTimeouts?.ackTimeoutMs ?? WATCHDOG_A_TIMEOUT_MS,
       startTimeoutMs: watchdogTimeouts?.startTimeoutMs ?? WATCHDOG_B_TIMEOUT_MS,
@@ -229,8 +240,13 @@ export class StudySessionService {
       serverAcknowledgedInput: false,
     };
 
-    this.currentUserAudioChunks = [];
-    this.currentUserAudioBytes = 0;
+    if (this.currentUserAudioChunks.length > 0 && this.currentUserAudioBytes >= 9600) {
+      // Prior speech turn had uncommitted audio, flush and preserve it so nothing is lost
+      this.flushUserAudioMessage();
+    } else {
+      this.currentUserAudioChunks = [];
+      this.currentUserAudioBytes = 0;
+    }
   }
 
   handleAudioStreamEnd(): void {
@@ -303,8 +319,9 @@ export class StudySessionService {
   }
 
   private async handleWatchdogATriggered(): Promise<void> {
-    console.warn(
-      `[StudySessionService] Watchdog A activado: TURN_ACK_TIMEOUT tras ${this.watchdogTimeouts.ackTimeoutMs}ms sin reconocimiento del servidor`,
+    this.logger.warn(
+      "StudySessionService",
+      `Watchdog A activado: TURN_ACK_TIMEOUT tras ${this.watchdogTimeouts.ackTimeoutMs}ms sin reconocimiento del servidor`,
     );
     this.clearWatchdogs();
 
@@ -332,8 +349,9 @@ export class StudySessionService {
   }
 
   private async handleWatchdogBTriggered(): Promise<void> {
-    console.warn(
-      `[StudySessionService] Watchdog B activado: MODEL_START_TIMEOUT tras ${this.watchdogTimeouts.startTimeoutMs}ms sin salida del modelo`,
+    this.logger.warn(
+      "StudySessionService",
+      `Watchdog B activado: MODEL_START_TIMEOUT tras ${this.watchdogTimeouts.startTimeoutMs}ms sin salida del modelo`,
     );
     this.clearWatchdogs();
 
@@ -348,8 +366,9 @@ export class StudySessionService {
   }
 
   private async handleWatchdogCTriggered(): Promise<void> {
-    console.warn(
-      `[StudySessionService] Watchdog C activado: MODEL_STALLED_TIMEOUT tras ${this.watchdogTimeouts.stalledTimeoutMs}ms sin eventos durante la respuesta`,
+    this.logger.warn(
+      "StudySessionService",
+      `Watchdog C activado: MODEL_STALLED_TIMEOUT tras ${this.watchdogTimeouts.stalledTimeoutMs}ms sin eventos durante la respuesta`,
     );
     this.clearWatchdogs();
     this.flushModelMessage();
@@ -403,38 +422,47 @@ export class StudySessionService {
     }
 
     // Voice turn:
-    // Only create a user message if there is actual transcribed speech text from the user.
     const text = this.currentUserTranscription.trim();
     this.currentUserTranscription = "";
 
-    if (!text) {
-      // No transcribed speech text: discard accumulated ambient background audio chunks
-      this.currentUserAudioChunks = [];
-      this.currentUserAudioBytes = 0;
-      return;
-    }
-
     const hasAudio = this.currentUserAudioChunks.length > 0;
     const mergedAudio = hasAudio ? mergeUint8Arrays(this.currentUserAudioChunks) : undefined;
+    const totalBytes = this.currentUserAudioBytes;
     this.currentUserAudioChunks = [];
     this.currentUserAudioBytes = 0;
 
-    // Ensure audio has valid duration (at least 200ms -> 6400 bytes at 16kHz PCM16)
+    // Distinguish genuine user speech from background ambient noise
+    const hasSpokenAudio = Boolean(
+      mergedAudio &&
+        (totalBytes >= 9600 || (this.currentTurn?.speechStartedAt && totalBytes >= 3200)),
+    );
+
+    if (!text && !hasSpokenAudio) {
+      // Discard pure ambient noise/clicks when no real speech occurred
+      return;
+    }
+
+    const messageText = text || "🎙️ [Mensaje de voz grabado]";
+
+    // Ensure audio has valid duration (at least 100ms -> 3200 bytes at 16kHz PCM16)
     const isValidAudio = Boolean(mergedAudio && mergedAudio.byteLength >= 3200);
     const audioDurationMs =
       isValidAudio && mergedAudio
         ? Math.round((mergedAudio.byteLength / 2 / 16000) * 1000)
         : undefined;
 
-    const audioBase64 =
-      isValidAudio && mergedAudio
-        ? `data:audio/wav;base64,${WavEncoder.encodePcm16(mergedAudio, 16000).toString("base64")}`
-        : undefined;
+    const wavBuffer =
+      isValidAudio && mergedAudio ? WavEncoder.encodePcm16(mergedAudio, 16000) : undefined;
 
+    const audioBase64 = wavBuffer
+      ? `data:audio/wav;base64,${wavBuffer.toString("base64")}`
+      : undefined;
+
+    const messageId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const optimisticMsg: ChatMessage = {
-      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: messageId,
       role: "user",
-      text,
+      text: messageText,
       audioBase64,
       audioDurationMs,
       timestamp: Date.now(),
@@ -444,15 +472,47 @@ export class StudySessionService {
       listener(optimisticMsg);
     }
 
+    const chatId = this.currentChatId;
     this.chatStore
       .addMessage(
-        this.currentChatId,
+        chatId,
         {
           role: "user",
-          text,
+          text: messageText,
         },
         isValidAudio && mergedAudio ? { bytes: mergedAudio, sampleRate: 16000 } : undefined,
       )
+      .then((res) => {
+        // If message was saved with fallback placeholder text because live server didn't transcribe it,
+        // trigger background rescue transcription using Gemini REST
+        if (!text && isValidAudio && wavBuffer && this.rescueTranscriber && res.ok) {
+          const savedMessageId = res.value.id;
+          void (async () => {
+            try {
+              const apiKey = await this.secretStore.getGeminiApiKey();
+              if (!apiKey) return;
+              const transcribed = await this.rescueTranscriber.transcribeAudioWav(
+                wavBuffer,
+                apiKey,
+              );
+              if (transcribed && this.chatStore) {
+                const updateRes = await this.chatStore.updateMessageText(
+                  chatId,
+                  savedMessageId,
+                  transcribed,
+                );
+                if (updateRes.ok) {
+                  for (const listener of this.messageCompleteListeners) {
+                    listener(updateRes.value);
+                  }
+                }
+              }
+            } catch {
+              // ignore background rescue transcription error, audio remains preserved
+            }
+          })();
+        }
+      })
       .catch(() => {});
   }
 
@@ -665,6 +725,11 @@ export class StudySessionService {
       return;
     }
 
+    // Ensure any user speech accumulated prior to the error/drop is preserved
+    if (this.currentUserAudioChunks.length > 0 && this.currentUserAudioBytes >= 9600) {
+      this.flushUserAudioMessage();
+    }
+
     if (this.recoveryPolicy.shouldRetry(error, this.reconnectAttempt + 1)) {
       this.reconnectAttempt += 1;
       this.setState({
@@ -707,8 +772,21 @@ export class StudySessionService {
         } else {
           this.setState({ status: "listening", startedAt: Date.now() });
 
-          // If we have unacknowledged audio from the previous turn, replay once
-          if (retryAudioChunks && retryAudioChunks.length > 0) {
+          // If we buffered chunks while reconnecting, flush them immediately
+          if (this.reconnectAudioChunks.length > 0) {
+            for (const chunk of this.reconnectAudioChunks) {
+              this.provider.sendAudio(chunk);
+            }
+            this.currentUserAudioChunks.push(...this.reconnectAudioChunks);
+            this.currentUserAudioBytes = this.currentUserAudioChunks.reduce(
+              (acc, c) => acc + c.byteLength,
+              0,
+            );
+            this.reconnectAudioChunks = [];
+            this.provider.endAudioStream();
+            this.startWatchdogA();
+          } else if (retryAudioChunks && retryAudioChunks.length > 0) {
+            // If we have unacknowledged audio from the previous turn, replay once
             for (const chunk of retryAudioChunks) {
               this.provider.sendAudio(chunk);
             }
@@ -732,6 +810,17 @@ export class StudySessionService {
 
   sendAudio(chunk: Uint8Array): void {
     if (this.isMuted || this.isAwaitingTextResponse) return;
+
+    if (this.state.status === "reconnecting") {
+      this.reconnectAudioChunks.push(chunk);
+      let total = this.reconnectAudioChunks.reduce((acc, c) => acc + c.byteLength, 0);
+      while (total > MAX_USER_AUDIO_BYTES && this.reconnectAudioChunks.length > 1) {
+        const removed = this.reconnectAudioChunks.shift();
+        if (removed) total -= removed.byteLength;
+      }
+      return;
+    }
+
     if (this.state.status === "listening" || this.state.status === "speaking") {
       // Only accumulate user speech chunks during listening mode, not while AI is speaking
       if (this.state.status === "listening") {
@@ -785,6 +874,7 @@ export class StudySessionService {
     this.currentTurn = null;
     this.clearReconnectTimeout();
     this.isAwaitingTextResponse = false;
+    this.reconnectAudioChunks = [];
     this.setState({ status: "stopping" });
     await this.flushModelMessage();
     await this.flushUserAudioMessage();
