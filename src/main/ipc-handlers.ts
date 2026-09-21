@@ -282,4 +282,18 @@ export function registerIpcHandlers(deps: IpcHandlerDependencies): void {
     const { app } = await import("electron");
     return app.getVersion();
   });
+
+  ipcMain.handle(IPC_CHANNELS.AUTOUPDATE_GET_VERSION_INFO, async () => {
+    return AutoUpdateService.getVersionInfo();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.AUTOUPDATE_INSTALL, async () => {
+    AutoUpdateService.quitAndInstall();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.AUTOUPDATE_OPEN_EXTERNAL, async (_, targetUrl?: string) => {
+    const { shell } = await import("electron");
+    const url = targetUrl || "https://github.com/marcomarca/feynman-live/releases/latest";
+    await shell.openExternal(url);
+  });
 }

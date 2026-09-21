@@ -89,7 +89,7 @@ if (!gotTheLock) {
     trayManager.setupTray();
 
     // Initialize AutoUpdate Service
-    AutoUpdateService.init(logger);
+    AutoUpdateService.init(logger, () => windowManager.getMainWindow());
 
     app.on("activate", () => {
       windowManager.showAndFocus();

@@ -387,7 +387,7 @@ export const App: React.FC = () => {
             style={{ borderRadius: "4px", objectFit: "contain" }}
           />
           <span>Feynman Live</span>
-          <span className="titlebar-badge">v0.1.5 • Studio</span>
+          <span className="titlebar-badge">v0.1.6 • Studio</span>
         </div>
 
         <div className="titlebar-actions">

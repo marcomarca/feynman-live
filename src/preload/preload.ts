@@ -10,7 +10,11 @@ import type {
 } from "../domain/chat";
 import type { Result } from "../domain/result";
 import type { SessionState } from "../domain/session-state";
-import { type FeynmanDesktopApi, IPC_CHANNELS } from "../shared/ipc-contract";
+import {
+  type FeynmanDesktopApi,
+  IPC_CHANNELS,
+  type UpdateCheckResult,
+} from "../shared/ipc-contract";
 
 const api: FeynmanDesktopApi = {
   settings: {
@@ -127,6 +131,16 @@ const api: FeynmanDesktopApi = {
   updater: {
     check: () => ipcRenderer.invoke(IPC_CHANNELS.AUTOUPDATE_CHECK),
     getVersion: () => ipcRenderer.invoke(IPC_CHANNELS.AUTOUPDATE_GET_VERSION),
+    getVersionInfo: () => ipcRenderer.invoke(IPC_CHANNELS.AUTOUPDATE_GET_VERSION_INFO),
+    install: () => ipcRenderer.invoke(IPC_CHANNELS.AUTOUPDATE_INSTALL),
+    openDownload: (url?: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTOUPDATE_OPEN_EXTERNAL, url),
+    onStatusChange: (listener: (result: UpdateCheckResult) => void) => {
+      const handler = (_: unknown, result: UpdateCheckResult) => listener(result);
+      ipcRenderer.on(IPC_CHANNELS.AUTOUPDATE_STATUS_CHANGED, handler);
+      return () => {
+        ipcRenderer.removeListener(IPC_CHANNELS.AUTOUPDATE_STATUS_CHANGED, handler);
+      };
+    },
   },
 };
 

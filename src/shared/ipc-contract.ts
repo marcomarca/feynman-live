@@ -64,14 +64,20 @@ export const IPC_CHANNELS = {
   // Auto-Update
   AUTOUPDATE_CHECK: "autoupdate:check",
   AUTOUPDATE_GET_VERSION: "autoupdate:getVersion",
+  AUTOUPDATE_GET_VERSION_INFO: "autoupdate:getVersionInfo",
+  AUTOUPDATE_INSTALL: "autoupdate:install",
+  AUTOUPDATE_OPEN_EXTERNAL: "autoupdate:openExternal",
+  AUTOUPDATE_STATUS_CHANGED: "autoupdate:statusChanged",
 } as const;
 
 export interface UpdateCheckResult {
-  status: "up_to_date" | "update_available" | "downloading" | "error";
+  status: "up_to_date" | "update_available" | "downloading" | "ready_to_install" | "error";
   currentVersion: string;
   latestVersion?: string;
   message: string;
   releaseUrl?: string;
+  downloadUrl?: string;
+  isPortable?: boolean;
 }
 
 export interface FeynmanDesktopApi {
@@ -137,5 +143,9 @@ export interface FeynmanDesktopApi {
   readonly updater: {
     check(): Promise<UpdateCheckResult>;
     getVersion(): Promise<string>;
+    getVersionInfo(): Promise<{ version: string; isPortable: boolean }>;
+    install(): Promise<void>;
+    openDownload(url?: string): Promise<void>;
+    onStatusChange?(listener: (result: UpdateCheckResult) => void): () => void;
   };
 }

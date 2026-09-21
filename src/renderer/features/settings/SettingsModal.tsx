@@ -12,6 +12,7 @@ import {
   AVAILABLE_VOICES,
   GEMINI_LIVE_MODEL,
 } from "../../../shared/constants";
+import type { UpdateCheckResult } from "../../../shared/ipc-contract";
 import { Button } from "../../components/Button";
 import { Modal } from "../../components/Modal";
 
@@ -52,6 +53,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   );
   const [startWithContext, setStartWithContext] = useState(settings.startWithContext ?? true);
 
+  const [appVersion, setAppVersion] = useState("0.1.6");
+  const [isPortable, setIsPortable] = useState(false);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<UpdateCheckResult | null>(null);
+
   useEffect(() => {
     setVoice(settings.voice);
     setThinkingLevel(settings.thinkingLevel);
@@ -60,6 +66,52 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setPreferredFallback(settings.preferredFallbackProvider);
     setStartWithContext(settings.startWithContext ?? true);
   }, [settings]);
+
+  useEffect(() => {
+    if (window.feynmanDesktopApi?.updater) {
+      window.feynmanDesktopApi.updater
+        .getVersionInfo()
+        .then((info) => {
+          setAppVersion(info.version);
+          setIsPortable(info.isPortable);
+        })
+        .catch(() => {});
+
+      const unsubscribe = window.feynmanDesktopApi.updater.onStatusChange?.((res) => {
+        setUpdateStatus(res);
+      });
+      return () => {
+        unsubscribe?.();
+      };
+    }
+  }, []);
+
+  const handleCheckUpdates = async () => {
+    if (!window.feynmanDesktopApi?.updater) return;
+    setIsCheckingUpdate(true);
+    try {
+      const res = await window.feynmanDesktopApi.updater.check();
+      setUpdateStatus(res);
+    } catch {
+      setUpdateStatus({
+        status: "error",
+        currentVersion: appVersion,
+        message: "No se pudo conectar con el servidor de actualizaciones.",
+      });
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  };
+
+  const handleApplyUpdate = async () => {
+    if (!window.feynmanDesktopApi?.updater) return;
+    await window.feynmanDesktopApi.updater.install();
+  };
+
+  const handleDownloadPortable = async (url?: string) => {
+    if (!window.feynmanDesktopApi?.updater) return;
+    await window.feynmanDesktopApi.updater.openDownload(url);
+  };
 
   const handleSaveKey = async () => {
     if (!apiKeyInput.trim()) return;
@@ -291,6 +343,119 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             mensajes. Si está desactivado, cada sesión comenzará desde cero sin historial acumulado.
           </span>
         </div>
+      </div>
+
+      {/* App Updates Section */}
+      <div
+        style={{
+          marginTop: "20px",
+          padding: "16px",
+          background: "rgba(255, 255, 255, 0.03)",
+          border: "1px solid var(--border-subtle)",
+          borderRadius: "var(--radius-md)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "12px",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "10px",
+          }}
+        >
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)" }}>
+                Actualizaciones del Sistema
+              </span>
+              <span
+                style={{
+                  fontSize: "11px",
+                  padding: "2px 8px",
+                  borderRadius: "12px",
+                  background: isPortable ? "rgba(245, 158, 11, 0.15)" : "rgba(99, 102, 241, 0.15)",
+                  color: isPortable ? "var(--accent-amber)" : "#a5b4fc",
+                  border: isPortable
+                    ? "1px solid rgba(245, 158, 11, 0.3)"
+                    : "1px solid rgba(99, 102, 241, 0.3)",
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.5px",
+                }}
+              >
+                {isPortable ? "Portable" : "Instalado"}
+              </span>
+            </div>
+            <span
+              style={{
+                fontSize: "12px",
+                color: "var(--text-muted)",
+                marginTop: "3px",
+                display: "block",
+              }}
+            >
+              Versión actual:{" "}
+              <strong style={{ color: "var(--text-secondary)" }}>v{appVersion}</strong>
+            </span>
+          </div>
+
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={handleCheckUpdates}
+            disabled={isCheckingUpdate || updateStatus?.status === "downloading"}
+          >
+            {isCheckingUpdate ? "Buscando..." : "Buscar actualizaciones"}
+          </Button>
+        </div>
+
+        {updateStatus && (
+          <div
+            className={`alert-box ${
+              updateStatus.status === "update_available" ||
+              updateStatus.status === "ready_to_install"
+                ? "alert-warning"
+                : updateStatus.status === "downloading"
+                  ? "alert-info"
+                  : updateStatus.status === "error"
+                    ? "alert-error"
+                    : "alert-success"
+            }`}
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "8px",
+              width: "100%",
+            }}
+          >
+            <span style={{ flex: 1, minWidth: "200px" }}>{updateStatus.message}</span>
+            {updateStatus.status === "ready_to_install" && (
+              <Button size="sm" variant="primary" onClick={handleApplyUpdate}>
+                Reiniciar y aplicar
+              </Button>
+            )}
+            {updateStatus.status === "update_available" && updateStatus.isPortable && (
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => handleDownloadPortable(updateStatus.downloadUrl)}
+              >
+                Descargar ejecutable {updateStatus.latestVersion || ""}
+              </Button>
+            )}
+            {updateStatus.status === "update_available" && !updateStatus.isPortable && (
+              <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                Descargando en segundo plano...
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </Modal>
   );

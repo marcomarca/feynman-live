@@ -1,9 +1,13 @@
 import https from "node:https";
+import type { BrowserWindow } from "electron";
 import type { UpdateCheckResult } from "../shared/ipc-contract";
 import type { AppLogger } from "../shared/logger";
 
 let loggerInstance: AppLogger | null = null;
 let isInitialized = false;
+let updateDownloaded = false;
+let downloadedVersion: string | null = null;
+let mainWindowGetter: (() => BrowserWindow | null) | null = null;
 
 /**
  * Helper para obtener electron de forma segura en entornos de ejecución.
@@ -25,6 +29,18 @@ export function isPortable(): boolean {
 }
 
 /**
+ * Retorna la información de versión y tipo de empaquetado.
+ */
+export function getVersionInfo(): { version: string; isPortable: boolean } {
+  const electron = getElectron();
+  const version = electron?.app ? electron.app.getVersion() : "0.0.0";
+  return {
+    version,
+    isPortable: isPortable(),
+  };
+}
+
+/**
  * Compara dos versiones siguiendo Semantic Versioning.
  * Retorna 1 si v1 > v2, -1 si v1 < v2, y 0 si son iguales.
  */
@@ -42,15 +58,22 @@ export function compareSemver(v1: string, v2: string): number {
 }
 
 /**
- * Consulta directamente la API de GitHub Releases para verificar versiones en entornos portables.
+ * Consulta directamente la API de GitHub Releases para verificar versiones en entornos portables
+ * o como fallback cuando no hay acceso a latest.yml.
  */
 export async function checkGitHubReleasesFallback(
   currentVersion: string,
 ): Promise<UpdateCheckResult> {
+  const portable = isPortable();
+
   try {
     const url = "https://api.github.com/repos/marcomarca/feynman-live/releases/latest";
 
-    const data = await new Promise<{ tag_name?: string; html_url?: string }>((resolve, reject) => {
+    const data = await new Promise<{
+      tag_name?: string;
+      html_url?: string;
+      assets?: Array<{ name?: string; browser_download_url?: string }>;
+    }>((resolve, reject) => {
       const req = https.get(url, { headers: { "User-Agent": "FeynmanLive-App" } }, (res) => {
         if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
           return reject(new Error(`HTTP ${res.statusCode}`));
@@ -73,8 +96,30 @@ export async function checkGitHubReleasesFallback(
 
     const latestTag: string = data.tag_name || "";
     const latestVersion = latestTag.replace(/^v/, "");
-
     const isNewer = compareSemver(latestVersion, currentVersion) > 0;
+
+    const portableAsset = Array.isArray(data.assets)
+      ? data.assets.find(
+          (a) =>
+            typeof a.name === "string" &&
+            a.name.toLowerCase().includes("portable") &&
+            a.name.toLowerCase().endsWith(".exe"),
+        )
+      : undefined;
+
+    const setupAsset = Array.isArray(data.assets)
+      ? data.assets.find(
+          (a) =>
+            typeof a.name === "string" &&
+            (a.name.toLowerCase().includes("setup") ||
+              a.name.toLowerCase().includes("installer")) &&
+            a.name.toLowerCase().endsWith(".exe"),
+        )
+      : undefined;
+
+    const downloadUrl = portable
+      ? portableAsset?.browser_download_url || data.html_url
+      : setupAsset?.browser_download_url || data.html_url;
 
     if (isNewer) {
       return {
@@ -82,7 +127,11 @@ export async function checkGitHubReleasesFallback(
         currentVersion,
         latestVersion: latestTag,
         releaseUrl: data.html_url,
-        message: `Nueva versión ${latestTag} disponible en GitHub.`,
+        downloadUrl,
+        isPortable: portable,
+        message: portable
+          ? `Nueva versión ${latestTag} disponible. Puedes descargar el nuevo ejecutable portable.`
+          : `Nueva versión ${latestTag} disponible para actualizar.`,
       };
     }
 
@@ -91,12 +140,15 @@ export async function checkGitHubReleasesFallback(
       currentVersion,
       latestVersion: latestTag,
       releaseUrl: data.html_url,
+      downloadUrl,
+      isPortable: portable,
       message: "Ya tienes instalada la versión más reciente de Feynman Live.",
     };
   } catch {
     return {
       status: "up_to_date",
       currentVersion,
+      isPortable: portable,
       message: "No se encontraron actualizaciones pendientes o no hay conexión con GitHub.",
     };
   }
@@ -111,9 +163,25 @@ export async function checkGitHubReleasesFallback(
 export async function checkForUpdatesManual(): Promise<UpdateCheckResult> {
   const electron = getElectron();
   const currentVersion = electron?.app ? electron.app.getVersion() : "0.0.0";
+  const portable = isPortable();
 
-  if (isPortable() || !electron?.app?.isPackaged) {
-    return checkGitHubReleasesFallback(currentVersion);
+  if (updateDownloaded) {
+    return {
+      status: "ready_to_install",
+      currentVersion,
+      latestVersion: downloadedVersion || currentVersion,
+      isPortable: false,
+      message:
+        "Actualización descargada y lista para instalar. Reinicia la aplicación para aplicarla.",
+    };
+  }
+
+  if (portable || !electron?.app?.isPackaged) {
+    const res = await checkGitHubReleasesFallback(currentVersion);
+    return {
+      ...res,
+      isPortable: portable,
+    };
   }
 
   try {
@@ -125,7 +193,23 @@ export async function checkForUpdatesManual(): Promise<UpdateCheckResult> {
       const cleanup = () => {
         autoUpdater.removeListener("update-available", onAvailable);
         autoUpdater.removeListener("update-not-available", onNotAvailable);
+        autoUpdater.removeListener("update-downloaded", onDownloaded);
         autoUpdater.removeListener("error", onError);
+      };
+
+      const onDownloaded = (info: { version?: string }) => {
+        updateDownloaded = true;
+        downloadedVersion = info.version || null;
+        if (isResolved) return;
+        isResolved = true;
+        cleanup();
+        resolve({
+          status: "ready_to_install",
+          currentVersion,
+          latestVersion: info.version,
+          isPortable: false,
+          message: "Actualización descargada y lista para instalar.",
+        });
       };
 
       const onAvailable = (info: { version?: string }) => {
@@ -136,6 +220,7 @@ export async function checkForUpdatesManual(): Promise<UpdateCheckResult> {
           status: "downloading",
           currentVersion,
           latestVersion: info.version,
+          isPortable: false,
           message: "Hay una nueva versión disponible y se está descargando en segundo plano.",
         });
       };
@@ -147,6 +232,7 @@ export async function checkForUpdatesManual(): Promise<UpdateCheckResult> {
         resolve({
           status: "up_to_date",
           currentVersion,
+          isPortable: false,
           message: "Ya tienes instalada la versión más reciente de Feynman Live.",
         });
       };
@@ -161,6 +247,7 @@ export async function checkForUpdatesManual(): Promise<UpdateCheckResult> {
 
       autoUpdater.once("update-available", onAvailable);
       autoUpdater.once("update-not-available", onNotAvailable);
+      autoUpdater.once("update-downloaded", onDownloaded);
       autoUpdater.once("error", onError);
 
       // Timeout preventivo tras 8s
@@ -181,13 +268,32 @@ export async function checkForUpdatesManual(): Promise<UpdateCheckResult> {
 }
 
 /**
- * Inicializa las actualizaciones automáticas en segundo plano con electron-updater.
- * - Solo activo en producción (app.isPackaged) y fuera de entorno de pruebas.
- * - Descarga silenciosa de actualizaciones para instalaciones NSIS.
- * - Muestra un diálogo nativo cuando la descarga finaliza para reiniciar la app.
+ * Cierra la aplicación e instala la actualización descargada (NSIS).
  */
-export async function init(logger: AppLogger): Promise<void> {
+export function quitAndInstall(): void {
+  const electron = getElectron();
+  if (!electron) return;
+  try {
+    const { autoUpdater } = require("electron-updater");
+    autoUpdater.quitAndInstall(false, true);
+  } catch (err) {
+    loggerInstance?.error("autoupdate", "Error al ejecutar quitAndInstall", err);
+  }
+}
+
+/**
+ * Inicializa las actualizaciones automáticas en segundo plano.
+ * - En modo portable: realiza monitoreo periódico contra la API de GitHub sin alterar el binario en caliente.
+ * - En modo instalado (NSIS): gestiona descarga automática en segundo plano y aviso de reinicio.
+ */
+export async function init(
+  logger: AppLogger,
+  getMainWindow?: () => BrowserWindow | null,
+): Promise<void> {
   loggerInstance = logger;
+  if (getMainWindow) {
+    mainWindowGetter = getMainWindow;
+  }
 
   if (isInitialized) {
     return;
@@ -205,8 +311,31 @@ export async function init(logger: AppLogger): Promise<void> {
   if (isPortable()) {
     loggerInstance.info(
       "autoupdate",
-      "Modo portable detectado: Auto-descarga directa desactivada para proteger el ejecutable.",
+      "Modo portable detectado: Verificación periódica activa vía GitHub Releases (sin sobreescritura de binario).",
     );
+
+    const checkPortable = () => {
+      checkGitHubReleasesFallback(electron.app.getVersion())
+        .then((res) => {
+          if (res.status === "update_available") {
+            loggerInstance?.info(
+              "autoupdate",
+              `Nueva versión portable disponible en GitHub: ${res.latestVersion}`,
+            );
+            const win = mainWindowGetter ? mainWindowGetter() : null;
+            if (win && !win.isDestroyed()) {
+              win.webContents.send("autoupdate:statusChanged", res);
+            }
+          }
+        })
+        .catch(() => {});
+    };
+
+    // Chequeo inicial y luego cada 2 horas
+    setTimeout(checkPortable, 5000);
+    setInterval(checkPortable, 2 * 60 * 60 * 1000);
+
+    isInitialized = true;
     return;
   }
 
@@ -224,10 +353,23 @@ export async function init(logger: AppLogger): Promise<void> {
     autoUpdater.autoInstallOnAppQuit = true;
 
     autoUpdater.on("update-downloaded", (info) => {
+      updateDownloaded = true;
+      downloadedVersion = info.version || null;
       loggerInstance?.info(
         "autoupdate",
         `Actualización descargada y lista para aplicar: ${info.version || "nueva versión"}`,
       );
+
+      const win = mainWindowGetter ? mainWindowGetter() : null;
+      if (win && !win.isDestroyed()) {
+        win.webContents.send("autoupdate:statusChanged", {
+          status: "ready_to_install",
+          currentVersion: electron.app.getVersion(),
+          latestVersion: info.version,
+          isPortable: false,
+          message: "Actualización descargada y lista para instalar.",
+        });
+      }
 
       if (!electron.dialog) return;
 
@@ -294,4 +436,6 @@ export const AutoUpdateService = {
   checkForUpdatesManual,
   checkGitHubReleasesFallback,
   compareSemver,
+  quitAndInstall,
+  getVersionInfo,
 };

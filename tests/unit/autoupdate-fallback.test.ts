@@ -16,4 +16,23 @@ describe("AutoUpdateService Fallback Check", () => {
     expect(["update_available", "up_to_date"]).toContain(res.status);
     expect(res.currentVersion).toBe("0.0.1");
   });
+
+  it("should return version and isPortable boolean in getVersionInfo", () => {
+    const info = AutoUpdateService.getVersionInfo();
+    expect(typeof info.version).toBe("string");
+    expect(typeof info.isPortable).toBe("boolean");
+  });
+
+  it("should detect portable execution status based on env", () => {
+    const original = process.env.PORTABLE_EXECUTABLE_DIR;
+    try {
+      process.env.PORTABLE_EXECUTABLE_DIR = "";
+      expect(AutoUpdateService.isPortable()).toBe(false);
+
+      process.env.PORTABLE_EXECUTABLE_DIR = "C:\\Temp\\PortableApp";
+      expect(AutoUpdateService.isPortable()).toBe(true);
+    } finally {
+      process.env.PORTABLE_EXECUTABLE_DIR = original;
+    }
+  });
 });
